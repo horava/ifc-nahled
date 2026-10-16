@@ -3,7 +3,8 @@
 Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohlížeči (three.js + web-ifc) a modely zpracovává přímo v zařízení, nikam je neodesílá.
 
 **Umí:**
-- 3D zobrazení s dotykovým ovládáním: jeden prst otáčí, dva prsty posouvají a zoomují, klepnutí vybere prvek
+- 3D zobrazení s dotykovým ovládáním: jeden prst otáčí, dva prsty posouvají a zoomují (zoom míří k prstům), klepnutí vybere prvek
+- otáčení kolem vybraného prvku (přepínač Kolem prvku), dvojité klepnutí nastaví střed otáčení na bod modelu
 - vlastnosti prvku: atributy, GlobalId, materiál, všechny Psety a Qsety včetně vlastností typu
 - strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků
 - místnosti (IfcSpace) jako průhledné objemy, zapínají se v panelu Model

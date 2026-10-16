@@ -65,6 +65,8 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.12;
 controls.screenSpacePanning = true;
 controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+controls.enableRotate = false; // otáčení řešíme sami kolem zvoleného středu (viz orbitBy)
+controls.zoomToCursor = true;  // zoom (kolečko i pinch) míří k bodu pod kurzorem / prsty
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f8c, 1.6));
 const sun = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -369,29 +371,126 @@ function deselect(render = true) {
 const ray = new THREE.Raycaster();
 const ptr = new THREE.Vector2();
 let down = null;
-let activePointers = 0;
+let lastTap = null;
+const pointers = new Map();
+let orbit = null;
+try { S.orbitSel = localStorage.getItem('ifc-nahled-orbit-sel') !== '0'; } catch (e) { S.orbitSel = true; }
+
+/* ----- otáčení kolem středu: výběr / cíl kamery ----- */
+const pivotEl = $('#pivot');
+let pivotHideT = 0;
+function currentPivot() {
+  if (S.orbitSel && S.selected != null) {
+    const rec = S.elements.get(S.selected);
+    if (rec && rec.meshes.length) return boxOf(rec.meshes).getCenter(new THREE.Vector3());
+  }
+  return controls.target.clone();
+}
+function showPivot(p, hold) {
+  _v.copy(p).project(camera);
+  const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
+  pivotEl.style.left = `${(_v.x + 1) / 2 * w}px`;
+  pivotEl.style.top = `${(1 - _v.y) / 2 * h}px`;
+  pivotEl.hidden = !(_v.z > -1 && _v.z < 1);
+  clearTimeout(pivotHideT);
+  if (!hold) pivotHideT = setTimeout(() => { pivotEl.hidden = true; }, 650);
+}
+const _right = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const ORBIT_UP = new THREE.Vector3(0, 1, 0);
+function orbitBy(dx, dy, P) {
+  const h = renderer.domElement.clientHeight || 1;
+  const C = camera.position.clone(), T = controls.target.clone();
+  // vodorovně: kolem svislé osy procházející středem P
+  _q.setFromAxisAngle(ORBIT_UP, -2 * Math.PI * dx / h);
+  C.sub(P).applyQuaternion(_q).add(P);
+  T.sub(P).applyQuaternion(_q).add(P);
+  // svisle: kolem vodorovné osy kamery, s omezením, aby se pohled nepřeklopil
+  const off = C.clone().sub(T);
+  const phi = Math.acos(THREE.MathUtils.clamp(off.y / Math.max(off.length(), 1e-9), -1, 1));
+  const newPhi = THREE.MathUtils.clamp(phi - 2 * Math.PI * dy / h, 0.02, Math.PI - 0.02);
+  const dphi = newPhi - phi;
+  _right.crossVectors(T.clone().sub(C).normalize(), ORBIT_UP).normalize();
+  if (_right.lengthSq() > 0.5) {
+    _q.setFromAxisAngle(_right, dphi);
+    C.sub(P).applyQuaternion(_q).add(P);
+    T.sub(P).applyQuaternion(_q).add(P);
+  }
+  tweenId++; // zastaví případnou animaci kamery
+  camera.position.copy(C);
+  controls.target.copy(T);
+  camera.lookAt(T);
+  controls.update();
+  requestRender();
+}
+function setOrbitSel(on) {
+  S.orbitSel = on;
+  try { localStorage.setItem('ifc-nahled-orbit-sel', on ? '1' : '0'); } catch (e) { /* ignore */ }
+  $('#btn-orbit').setAttribute('aria-pressed', String(on));
+  toast(on ? 'Otáčení kolem vybraného prvku je zapnuté.' : 'Otáčí se kolem středu pohledu.');
+}
+
 renderer.domElement.addEventListener('pointerdown', (e) => {
-  activePointers++;
-  down = activePointers === 1 ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  const single = pointers.size === 1 && (e.pointerType !== 'mouse' || e.button === 0);
+  down = single ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+  orbit = single ? { x: e.clientX, y: e.clientY, P: null, moved: false } : null;
+});
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!orbit || pointers.size !== 1) return;
+  const dx = e.clientX - orbit.x, dy = e.clientY - orbit.y;
+  if (!orbit.moved && Math.hypot(dx, dy) < 6) return;
+  if (!orbit.P) orbit.P = currentPivot();
+  orbit.moved = true;
+  orbit.x = e.clientX; orbit.y = e.clientY;
+  orbitBy(dx, dy, orbit.P);
+  showPivot(orbit.P, true);
 });
 const endPointer = (e) => {
-  activePointers = Math.max(0, activePointers - 1);
+  pointers.delete(e.pointerId);
+  if (orbit?.moved) showPivot(orbit.P, false);
+  orbit = null;
   if (!down || e.type === 'pointercancel') { down = null; return; }
   const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
-  const dt = performance.now() - down.t;
+  const now = performance.now();
+  const dt = now - down.t;
   down = null;
   if (moved > 8 || dt > 600) return;
+  if (!S.measure.on && lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 30) {
+    lastTap = null;
+    doubleTap(e.clientX, e.clientY);
+    return;
+  }
+  lastTap = { t: now, x: e.clientX, y: e.clientY };
   pick(e.clientX, e.clientY);
 };
 renderer.domElement.addEventListener('pointerup', endPointer);
 renderer.domElement.addEventListener('pointercancel', endPointer);
 
-function pick(cx, cy) {
+function hitAt(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
   ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ptr, camera);
   const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false);
-  const hit = hits.find((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
+  return hits.find((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4) || null;
+}
+/* dvojité klepnutí: bod se přesune do středu pohledu a stane se středem otáčení */
+function doubleTap(cx, cy) {
+  const hit = hitAt(cx, cy);
+  if (!hit) return;
+  const P = hit.point.clone();
+  const id = hit.object.userData.id;
+  if (S.selected !== id) select(id);
+  const shift = P.clone().sub(controls.target);
+  tween(camera.position.clone().add(shift), P, true);
+  setTimeout(() => showPivot(P, false), 470);
+}
+
+function pick(cx, cy) {
+  const r = renderer.domElement.getBoundingClientRect();
+  const hit = hitAt(cx, cy);
   if (S.measure.on) { if (hit) measurePoint(hit, cx - r.left, cy - r.top); return; }
   if (hit) {
     const id = hit.object.userData.id;
@@ -795,6 +894,8 @@ $('#btn-iso').addEventListener('click', () => fitView('iso'));
 $('#btn-top').addEventListener('click', () => fitView('top'));
 $('#btn-clip').addEventListener('click', () => toggleClip());
 $('#btn-measure').addEventListener('click', () => toggleMeasure());
+$('#btn-orbit').addEventListener('click', () => setOrbitSel(!S.orbitSel));
+$('#btn-orbit').setAttribute('aria-pressed', String(S.orbitSel));
 $('#btn-edges').addEventListener('click', () => {
   S.edges = !S.edges;
   modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges; });
