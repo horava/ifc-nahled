@@ -84,7 +84,13 @@ renderer.autoClear = false;
 const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
 const edgeMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.5 });
 const selMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
-const spaceMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.22, depthWrite: false });
+// místnosti: průhledné a mírně přisunuté ke kameře, aby jejich plochy shodné s podlahou
+// a stěnami neblikaly (z-fighting) a podlaha místnosti byla v řezu vidět obarvená. DoubleSide kreslí three.js ve dvou průchodech
+// (zadní, pak přední strany), takže i v řezu je vidět obarvená podlaha místnosti.
+const spaceMat = new THREE.MeshLambertMaterial({
+  side: THREE.DoubleSide, transparent: true, opacity: 0.22, depthWrite: false,
+  polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4,
+});
 
 let needsRender = true;
 const requestRender = () => { needsRender = true; };
