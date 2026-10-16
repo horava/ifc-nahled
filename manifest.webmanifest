@@ -1,6 +1,6 @@
 {
-  "name": "IFC Náhled",
-  "short_name": "IFC Náhled",
+  "name": "IFC prohlížečka",
+  "short_name": "IFC prohlížečka",
   "description": "Offline prohlížeč IFC modelů. Modely se zpracují přímo v zařízení.",
   "lang": "cs",
   "start_url": "./",

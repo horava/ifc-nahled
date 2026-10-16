@@ -29,12 +29,19 @@ for i, (name, elev) in enumerate([("1.NP", 0.0), ("2.NP", H)]):
     storeys.append((s, elev))
 
 
+import os
+GLOBAL_ROT = np.radians(float(os.environ.get("ROT_DEG", "0")))  # natočení celé budovy (pro testy)
+
+
 def place(el, x, y, z, rot=0.0):
     m = np.eye(4)
     c, s_ = np.cos(rot), np.sin(rot)
     m[0][0], m[0][1], m[1][0], m[1][1] = c, -s_, s_, c
     m[0][3], m[1][3], m[2][3] = x, y, z
-    api.run("geometry.edit_object_placement", f, product=el, matrix=m)
+    g = np.eye(4)
+    gc, gs = np.cos(GLOBAL_ROT), np.sin(GLOBAL_ROT)
+    g[0][0], g[0][1], g[1][0], g[1][1] = gc, -gs, gs, gc
+    api.run("geometry.edit_object_placement", f, product=el, matrix=g @ m)
 
 
 def box(el, lx, ly, lz):
@@ -114,6 +121,18 @@ for s, z in storeys:
         box(win, 1.8, 0.08, 1.5)
         paint(win, s_glass)
         pset(win, "Pset_WindowCommon", {"IsExternal": True, "ThermalTransmittance": 0.9, "GlazingAreaFraction": 0.8})
+    # rooms (IfcSpace), aggregated to the storey
+    lvl = "1" if z == 0 else "2"
+    for k, (rx, rw, long_name) in enumerate([(T, 8.5 - T, "Kancelář"), (8.65, W - T - 8.65, "Zasedací místnost")]):
+        sp = api.run("root.create_entity", f, ifc_class="IfcSpace", name=f"{lvl}.0{k + 1}", predefined_type="INTERNAL")
+        sp.LongName = long_name
+        api.run("aggregate.assign_object", f, relating_object=s, products=[sp])
+        place(sp, rx, T, z)
+        box(sp, rw, D - 2 * T, H - 0.25)
+        pset(sp, "Pset_SpaceCommon", {"IsExternal": False, "Reference": f"{lvl}.0{k + 1}"})
+        qto = api.run("pset.add_qto", f, product=sp, name="Qto_SpaceBaseQuantities")
+        api.run("pset.edit_qto", f, qto=qto, properties={"NetFloorArea": round(rw * (D - 2 * T), 2), "Height": H - 0.25})
+        pset(sp, "MU_Pasport", {"KodPodlazi": sn, "KodMistnosti": f"{lvl}.0{k + 1}", "Ucel": long_name})
     # columns inside
     for k, (cx, cy) in enumerate([(4.5, 4.35), (11.5, 4.35)]):
         col = api.run("root.create_entity", f, ifc_class="IfcColumn", name=f"Sloup S{k + 1} – {sn}")
@@ -147,6 +166,47 @@ place(roof, -0.4, -0.4, 2 * H - 0.25)
 box(roof, W + 0.8, D + 0.8, 0.35)
 paint(roof, s_roof)
 pset(roof, "Pset_SlabCommon", {"IsExternal": True, "ThermalTransmittance": 0.15})
+
+# ---- georeference: IfcMapConversion → S-JTSK (EPSG:5514), výšky Bpv ----
+GEO = os.environ.get("GEO", "mapconv")  # mapconv | pset | none
+if GEO != "none":
+    import math
+    from pyproj import Transformer
+    E0, N0, H0 = -598420.0, -1160640.0, 231.5      # Brno, S-JTSK / Bpv
+    theta = math.radians(18.0)                      # natočení osy x projektu vůči ose E mapy
+    to_wgs = Transformer.from_crs(5514, 4326, always_xy=True)
+    to_map = Transformer.from_crs(4326, 5514, always_xy=True)
+    lon, lat = to_wgs.transform(E0, N0)
+    # konvergence poledníků je vlastnost zobrazení: počítáme v zeměpisných souřadnicích S-JTSK (Bessel), bez transformace datumu
+    to_geo = Transformer.from_crs(5514, 4156, always_xy=True)
+    from_geo = Transformer.from_crs(4156, 5514, always_xy=True)
+    glon, glat = to_geo.transform(E0, N0)
+    qe, qn = from_geo.transform(glon, glat + 0.0005)
+    vx, vy = qe - E0, qn - N0
+    L = math.hypot(vx, vy); vx, vy = vx / L, vy / L
+    # skutečný sever v lokálních souřadnicích (R(-theta) · v)
+    tnx = vx * math.cos(theta) + vy * math.sin(theta)
+    tny = -vx * math.sin(theta) + vy * math.cos(theta)
+    ctx.TrueNorth = f.createIfcDirection((tnx, tny))
+
+    def dms(deg):
+        sign = -1 if deg < 0 else 1
+        deg = abs(deg)
+        d = int(deg); m = int((deg - d) * 60); sec = (deg - d - m / 60) * 3600
+        s_ = int(sec); mic = int(round((sec - s_) * 1e6))
+        return [sign * d, sign * m, sign * s_, sign * mic]
+    site.RefLatitude = dms(lat)
+    site.RefLongitude = dms(lon)
+    site.RefElevation = H0
+    metre = [u for u in f.by_type("IfcSIUnit") if u.UnitType == "LENGTHUNIT"][0]
+    if GEO == "mapconv":
+        crs = f.createIfcProjectedCRS("EPSG:5514", "S-JTSK / Krovak East North", "S-JTSK", "Bpv", None, None, metre)
+        f.createIfcMapConversion(ctx, crs, E0, N0, H0, math.cos(theta), math.sin(theta), 1.0)
+    else:  # IFC2x3 styl: ePSet_MapConversion / ePSet_ProjectedCRS na IfcProject
+        pset(project, "ePSet_MapConversion", {"Eastings": E0, "Northings": N0, "OrthogonalHeight": H0,
+                                               "XAxisAbscissa": math.cos(theta), "XAxisOrdinate": math.sin(theta), "Scale": 1.0})
+        pset(project, "ePSet_ProjectedCRS", {"Name": "EPSG:5514", "Description": "S-JTSK / Krovak East North",
+                                              "GeodeticDatum": "S-JTSK", "VerticalDatum": "Bpv"})
 
 f.write(out)
 print("ok", len(f.by_type("IfcProduct")))
