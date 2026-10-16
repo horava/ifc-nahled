@@ -105,8 +105,8 @@ button { font: inherit; color: inherit; }
 .badge b { font-weight: 600; color: var(--accent-ink); background: var(--accent); border-radius: 999px; padding: 2px 10px; font-size: 12px;
   letter-spacing: 0.04em; text-transform: uppercase; }
 
-.empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 8px; padding: 24px; color: var(--muted); }
-.empty strong { font-family: var(--f-display); font-size: 22px; color: var(--ink); font-weight: 600; }
+.stage-empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 8px; padding: 24px; color: var(--muted); }
+.stage-empty strong { font-family: var(--f-display); font-size: 22px; color: var(--ink); font-weight: 600; }
 
 /* toolbar */
 .toolbar { position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; box-sizing: border-box; bottom: 12px; display: flex; align-items: stretch; gap: 2px;
@@ -246,7 +246,7 @@ button { font: inherit; color: inherit; }
 .kv dt:first-of-type, .kv dt:first-of-type + dd { border-top: 0; }
 .kv dt { color: var(--muted); padding-right: 12px; }
 .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
-.kv dd.empty { color: var(--muted); }
+.kv dd.kv-empty { color: var(--muted); }
 
 /* overlays */
 .loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 70%, transparent); z-index: 5; }
@@ -427,7 +427,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
         <div class="pane3d" id="pane3d">
         <div id="viewport"></div>
           <div class="badge" id="sample-badge" hidden><b>Ukázka</b> Malý dvoupodlažní pavilon. Vlastní soubor otevřete vpravo nahoře.</div>
-          <div class="empty" id="empty-hint" hidden>
+          <div class="stage-empty" id="empty-hint" hidden>
             <strong>Otevřete IFC soubor</strong>
             <span>Ze složky Soubory, iCloudu nebo OneDrivu. Model se zpracuje přímo v zařízení.</span>
           </div>

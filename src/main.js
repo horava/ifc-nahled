@@ -1184,7 +1184,7 @@ function table(title, rows, extra) {
   sec.appendChild(h);
   const dl = el('dl', 'kv');
   rows.forEach(([k, v]) => {
-    dl.append(el('dt', null, k), el('dd', v ? null : 'empty', v || '—'));
+    dl.append(el('dt', null, k), el('dd', v ? null : 'kv-empty', v || '—'));
   });
   sec.appendChild(dl);
   return sec;
@@ -1972,7 +1972,7 @@ function geoTable(title, rows) {
   const sec = el('section', 'pset');
   sec.appendChild(el('h3', 'pset-title', title));
   const dl = el('dl', 'kv');
-  rows.filter(Boolean).forEach(([k, v, mono]) => { dl.append(el('dt', null, k), el('dd', mono ? 'mono' : (v ? null : 'empty'), v || '—')); });
+  rows.filter(Boolean).forEach(([k, v, mono]) => { dl.append(el('dt', null, k), el('dd', v ? (mono ? 'mono' : null) : 'kv-empty', v || '—')); });
   sec.appendChild(dl);
   return sec;
 }
