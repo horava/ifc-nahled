@@ -123,9 +123,40 @@ function renderFrame() {
   updateOverlay();
   needsRender = false;
 }
+/* ----- zoom bez zaseknutí ----- */
+// OrbitControls se ke svému cíli blíží po procentech, takže těsně před ním zoom
+// skoro stojí. Během zoomu proto cíl držíme aspoň walkDist před kamerou
+// (kamera pak plynule pokračuje dál) a na začátku gesta ho posadíme do hloubky
+// povrchu pod prsty, aby se zoom zpomaloval až u něj.
+let zoomUntil = 0;
+let lastWheel = 0;
+const _vd = new THREE.Vector3();
+function pushThrough() {
+  const T = S.walkDist || 1.5;
+  camera.getWorldDirection(_vd);
+  if (camera.position.distanceTo(controls.target) < T) {
+    controls.target.copy(camera.position).addScaledVector(_vd, T);
+  }
+}
+function zoomDepthAt(cx, cy) {
+  if (typeof hitAt !== 'function' || S.modelID == null) return;
+  const hit = hitAt(cx, cy);
+  if (!hit) return;
+  camera.getWorldDirection(_vd);
+  const depth = hit.point.clone().sub(camera.position).dot(_vd);
+  if (depth > 0.05) controls.target.copy(camera.position).addScaledVector(_vd, depth);
+}
+renderer.domElement.addEventListener('wheel', (e) => {
+  const now = performance.now();
+  if (now - lastWheel > 300) zoomDepthAt(e.clientX, e.clientY);
+  lastWheel = now;
+  zoomUntil = now + 300;
+}, { passive: true });
+
 (function loop() {
   requestAnimationFrame(loop);
   const moved = controls.update();
+  if (performance.now() < zoomUntil) pushThrough();
   if (moved || needsRender) renderFrame();
 })();
 
@@ -277,6 +308,7 @@ async function loadIfc(buffer, fileName) {
     S.bbox = boxOf(S.meshes.filter((m) => m.visible));
     if (S.bbox.isEmpty()) S.bbox.setFromObject(modelGroup);
     S.baseAngle = detectOrientation();
+    S.walkDist = THREE.MathUtils.clamp(S.bbox.getSize(new THREE.Vector3()).length() * 0.15, 1.5, 20);
     setupClip();
     fitView('iso', false);
 
@@ -432,6 +464,11 @@ function setOrbitSel(on) {
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    zoomDepthAt((a.x + b.x) / 2, (a.y + b.y) / 2);
+    zoomUntil = performance.now() + 300;
+  }
   const single = pointers.size === 1 && (e.pointerType !== 'mouse' || e.button === 0);
   down = single ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
   orbit = single ? { x: e.clientX, y: e.clientY, P: null, moved: false } : null;
@@ -439,6 +476,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) zoomUntil = performance.now() + 300;
   if (!orbit || pointers.size !== 1) return;
   const dx = e.clientX - orbit.x, dy = e.clientY - orbit.y;
   if (!orbit.moved && Math.hypot(dx, dy) < 6) return;
