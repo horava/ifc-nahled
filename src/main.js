@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import * as WebIFC from 'web-ifc';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 
 /* ---------- helpers ---------- */
 const $ = (s) => document.querySelector(s);
@@ -13,6 +16,8 @@ const el = (tag, cls, text) => {
 const nextFrame = () => new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)));
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const nf = new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 3 });
+const nf3 = new Intl.NumberFormat('cs-CZ', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+const nf2 = new Intl.NumberFormat('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const CLASS_LABELS = {
   IFCWALL: 'Stěny', IFCWALLSTANDARDCASE: 'Stěny', IFCWALLELEMENTEDCASE: 'Stěny', IFCCURTAINWALL: 'Lehké obvodové pláště',
@@ -40,7 +45,8 @@ const S = {
   storeys: [],           // { id, name, elev, visible, count }
   classes: new Map(),    // cls -> { visible, count }
   hidden: new Set(), isolated: null, selected: null,
-  meshes: [], bbox: new THREE.Box3(), clipOn: false, edges: true,
+  meshes: [], bbox: new THREE.Box3(), clipOn: false, clipPanel: false, edges: true,
+  measure: { on: false, first: null, list: [] },
 };
 
 /* ---------- three setup ---------- */
@@ -65,6 +71,9 @@ sun.position.set(1, 2, 1.4);
 scene.add(sun);
 const modelGroup = new THREE.Group();
 scene.add(modelGroup);
+const measureScene = new THREE.Scene();
+const measureMat = new LineMaterial({ linewidth: 3, depthTest: false, transparent: true, worldUnits: false });
+renderer.autoClear = false;
 
 const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
 const edgeMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.5 });
@@ -78,6 +87,7 @@ function applyTheme() {
   scene.background = new THREE.Color(cssVar('--ground') || '#e6e9e7');
   edgeMat.color.set(cssVar('--edge') || '#17201e');
   selMat.color.set(cssVar('--sel') || '#ff7a1a');
+  measureMat.color.set(cssVar('--sel') || '#ff7a1a');
   requestRender();
 }
 applyTheme();
@@ -88,6 +98,7 @@ function resize() {
   const w = viewport.clientWidth, h = viewport.clientHeight;
   if (!w || !h) return;
   renderer.setSize(w, h, false);
+  measureMat.resolution.set(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   requestRender();
@@ -98,8 +109,13 @@ new ResizeObserver(resize).observe(viewport);
   requestAnimationFrame(loop);
   const moved = controls.update();
   if (moved || needsRender) {
+    renderer.clear();
     renderer.clippingPlanes = S.clipOn ? [clipPlane] : [];
     renderer.render(scene, camera);
+    renderer.clippingPlanes = [];
+    renderer.clearDepth();
+    renderer.render(measureScene, camera);
+    updateOverlay();
     needsRender = false;
   }
 })();
@@ -132,7 +148,8 @@ function clearModel() {
   geos.forEach((g) => g.dispose());
   modelGroup.clear();
   S.elements.clear(); S.storeys = []; S.classes.clear(); S.hidden.clear();
-  S.isolated = null; S.meshes = []; S.clipOn = false;
+  S.isolated = null; S.meshes = []; S.clipOn = false; S.clipPanel = false;
+  clearMeasures(); updateClipUi();
   if (S.api && S.modelID != null) { try { S.api.CloseModel(S.modelID); } catch (e) { /* ignore */ } }
   S.modelID = null;
 }
@@ -345,6 +362,7 @@ function pick(cx, cy) {
   ray.setFromCamera(ptr, camera);
   const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false);
   const hit = hits.find((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
+  if (S.measure.on) { if (hit) measurePoint(hit, cx - r.left, cy - r.top); return; }
   if (hit) {
     const id = hit.object.userData.id;
     if (id === S.selected) deselect(); else select(id);
@@ -420,7 +438,9 @@ function setClip(h) {
 }
 function updateClipLabel() {
   const rel = Number(clipRange.value) - S.bbox.min.y;
-  $('#clip-value').textContent = `${nf.format(Math.round(rel * 100) / 100)} m nad spodní hranou`;
+  const t = `${nf2.format(rel)} m`;
+  $('#clip-value').textContent = t;
+  $('#clip-mini-value').textContent = t;
 }
 clipRange.addEventListener('input', () => setClip(clipRange.value));
 function storeyCutHeight(st) {
@@ -446,16 +466,120 @@ function renderClipChips() {
     wrap.appendChild(b);
   });
 }
+function updateClipUi() {
+  $('#clip-pop').hidden = !(S.clipOn && S.clipPanel);
+  $('#clip-mini').hidden = !(S.clipOn && !S.clipPanel);
+}
 function toggleClip(force) {
   S.clipOn = force ?? !S.clipOn;
-  $('#clip-pop').hidden = !S.clipOn;
-  if (S.clipOn && Number(clipRange.value) >= Number(clipRange.max) - 0.01) {
-    const mid = (S.bbox.min.y + S.bbox.max.y) / 2;
-    setClip(mid.toFixed(2));
+  if (S.clipOn) {
+    S.clipPanel = true;
+    if (Number(clipRange.value) >= Number(clipRange.max) - 0.01) {
+      const mid = (S.bbox.min.y + S.bbox.max.y) / 2;
+      setClip(mid.toFixed(2));
+    }
   }
+  updateClipUi();
   updateToolbar();
   requestRender();
 }
+function nudgeClip(d) {
+  const v = Math.min(Number(clipRange.max), Math.max(Number(clipRange.min), Number(clipRange.value) + d));
+  setClip(v.toFixed(2));
+}
+$('#clip-collapse').addEventListener('click', () => { S.clipPanel = false; updateClipUi(); });
+$('#clip-mini').addEventListener('click', () => { S.clipPanel = true; updateClipUi(); });
+$('#clip-off').addEventListener('click', () => toggleClip(false));
+$('#clip-up').addEventListener('click', () => nudgeClip(0.1));
+$('#clip-down').addEventListener('click', () => nudgeClip(-0.1));
+
+/* ---------- measurement ---------- */
+const overlay = $('#overlay');
+const _v = new THREE.Vector3();
+function toScreen(p) {
+  _v.copy(p).project(camera);
+  const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
+  return { x: (_v.x + 1) / 2 * w, y: (1 - _v.y) / 2 * h, ok: _v.z > -1 && _v.z < 1 };
+}
+function snapPoint(hit, sx, sy) {
+  if (!hit.face) return { p: hit.point.clone(), snap: false };
+  const pos = hit.object.geometry.attributes.position;
+  let best = null, bestD = 18;
+  for (const i of [hit.face.a, hit.face.b, hit.face.c]) {
+    const w = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(hit.object.matrixWorld);
+    const sc = toScreen(w);
+    const d = Math.hypot(sc.x - sx, sc.y - sy);
+    if (d < bestD) { bestD = d; best = w; }
+  }
+  return best ? { p: best, snap: true } : { p: hit.point.clone(), snap: false };
+}
+function dot(snap) { const d = el('div', 'mdot' + (snap ? ' snap' : '')); overlay.appendChild(d); return d; }
+function measurePoint(hit, sx, sy) {
+  const { p, snap } = snapPoint(hit, sx, sy);
+  const M = S.measure;
+  if (!M.first) {
+    M.first = { p, dot: dot(snap) };
+    setMeasureText('Klepněte na druhý bod', snap ? 'První bod přichycen k rohu.' : 'První bod je na ploše prvku.');
+  } else {
+    const a = M.first.p, b = p;
+    const geo = new LineGeometry();
+    geo.setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
+    const line = new Line2(geo, measureMat);
+    line.renderOrder = 999;
+    measureScene.add(line);
+    const label = el('div', 'mlabel', `${nf3.format(a.distanceTo(b))} m`);
+    overlay.appendChild(label);
+    const m = { a, b, line, dots: [M.first.dot, dot(snap)], label };
+    M.list.push(m);
+    M.first = null;
+    showMeasureResult(m);
+  }
+  requestRender();
+}
+function showMeasureResult(m) {
+  const d = m.a.distanceTo(m.b);
+  const dy = Math.abs(m.b.y - m.a.y);
+  const dh = Math.hypot(m.b.x - m.a.x, m.b.z - m.a.z);
+  setMeasureText(`${nf3.format(d)} m`, `vodorovně ${nf3.format(dh)} m · svisle ${nf3.format(dy)} m`);
+}
+function setMeasureText(main, sub) { $('#m-main').textContent = main; $('#m-sub').textContent = sub; }
+function updateOverlay() {
+  const M = S.measure;
+  const place = (node, p) => {
+    const s = toScreen(p);
+    node.hidden = !s.ok;
+    node.style.left = `${s.x}px`; node.style.top = `${s.y}px`;
+  };
+  if (M.first) place(M.first.dot, M.first.p);
+  for (const m of M.list) {
+    place(m.dots[0], m.a); place(m.dots[1], m.b);
+    place(m.label, _mid.copy(m.a).add(m.b).multiplyScalar(0.5));
+  }
+}
+const _mid = new THREE.Vector3();
+function clearMeasures() {
+  const M = S.measure;
+  M.list.forEach((m) => { measureScene.remove(m.line); m.line.geometry.dispose(); });
+  M.list = []; M.first = null;
+  overlay.replaceChildren();
+  setMeasureText('Klepněte na první bod', 'Body se přichytávají k rohům prvků.');
+  requestRender();
+}
+function toggleMeasure(force) {
+  const M = S.measure;
+  M.on = force ?? !M.on;
+  if (!M.on && M.first) { M.first.dot.remove(); M.first = null; }
+  if (M.on) {
+    if (S.selected != null) deselect();
+    if (M.list.length) showMeasureResult(M.list[M.list.length - 1]);
+    else setMeasureText('Klepněte na první bod', 'Body se přichytávají k rohům prvků.');
+  }
+  $('#measure-bar').hidden = !M.on;
+  updateToolbar();
+  requestRender();
+}
+$('#m-clear').addEventListener('click', clearMeasures);
+$('#m-done').addEventListener('click', () => toggleMeasure(false));
 
 /* ---------- toolbar ---------- */
 function updateToolbar() {
@@ -466,12 +590,14 @@ function updateToolbar() {
   const anyFilter = S.hidden.size || S.isolated || [...S.classes.entries()].some(([k, c]) => !c.visible && !HIDDEN_BY_DEFAULT.has(U(k))) || S.storeys.some((s) => !s.visible);
   $('#btn-showall').disabled = !anyFilter;
   $('#btn-clip').setAttribute('aria-pressed', String(S.clipOn));
+  $('#btn-measure').setAttribute('aria-pressed', String(S.measure.on));
   $('#btn-edges').setAttribute('aria-pressed', String(S.edges));
 }
 $('#btn-fit').addEventListener('click', () => fitView('keep'));
 $('#btn-iso').addEventListener('click', () => fitView('iso'));
 $('#btn-top').addEventListener('click', () => fitView('top'));
 $('#btn-clip').addEventListener('click', () => toggleClip());
+$('#btn-measure').addEventListener('click', () => toggleMeasure());
 $('#btn-edges').addEventListener('click', () => {
   S.edges = !S.edges;
   modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges; });
