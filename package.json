@@ -6,7 +6,8 @@
   },
   "dependencies": {
     "three": "0.180.0",
-    "web-ifc": "0.0.77"
+    "web-ifc": "0.0.77",
+    "fflate": "0.8.2"
   },
   "devDependencies": {
     "esbuild": "0.25.0"

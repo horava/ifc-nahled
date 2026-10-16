@@ -38,6 +38,9 @@ body { margin: 0; }
   --edge: #24302C;
   --glass: rgba(248, 250, 249, 0.86);
   --error: #B42318;
+  --ok: #2F7D4A;
+  --warn: #A86A00;
+  --info: #2F5F8A;
   --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
@@ -48,13 +51,13 @@ body { margin: 0; }
   :root:not([data-theme="light"]) {
     --bg: #121615; --ground: #1B2120; --panel: #1F2624; --ink: #E6ECE9; --muted: #95A39E; --line: #313B38;
     --hover: #28302E; --accent: #FF8A3D; --accent-ink: #1A1206; --sel: #FF8A3D; --edge: #050807;
-    --glass: rgba(31, 38, 36, 0.86); --error: #FF8B7E; color-scheme: dark;
+    --glass: rgba(31, 38, 36, 0.86); --error: #FF8B7E; --ok: #6CC58C; --warn: #E8B04A; --info: #8FB8E0; color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #121615; --ground: #1B2120; --panel: #1F2624; --ink: #E6ECE9; --muted: #95A39E; --line: #313B38;
   --hover: #28302E; --accent: #FF8A3D; --accent-ink: #1A1206; --sel: #FF8A3D; --edge: #050807;
-  --glass: rgba(31, 38, 36, 0.86); --error: #FF8B7E; color-scheme: dark;
+  --glass: rgba(31, 38, 36, 0.86); --error: #FF8B7E; --ok: #6CC58C; --warn: #E8B04A; --info: #8FB8E0; color-scheme: dark;
 }
 
 html, body { height: 100%; }
@@ -124,8 +127,8 @@ button { font: inherit; color: inherit; }
 .dock > * { pointer-events: auto; }
 .card { width: 100%; box-sizing: border-box; border-radius: 12px; background: var(--glass); border: 1px solid var(--line);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
-.clip-pop { padding: 6px 6px 8px 12px; display: grid; gap: 4px; }
-.clip-head { display: flex; align-items: center; gap: 8px; min-height: 36px; }
+.clip-pop { padding: 6px 6px 8px 8px; display: grid; gap: 4px; }
+.clip-head { display: flex; align-items: center; gap: 6px; min-height: 36px; padding-left: 4px; }
 .clip-head strong { font-family: var(--f-display); font-weight: 600; font-size: 15px; }
 .clip-val { font-family: var(--f-mono); font-size: 13px; color: var(--ink); font-variant-numeric: tabular-nums; }
 .clip-sub { font-size: 11px; color: var(--muted); }
@@ -133,6 +136,9 @@ button { font: inherit; color: inherit; }
 .ib { width: 36px; height: 36px; flex: none; border: 0; border-radius: 8px; background: transparent; cursor: pointer; display: grid; place-items: center; color: var(--ink); }
 .ib:hover { background: var(--hover); }
 .ib svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.seg { display: flex; padding: 3px; gap: 2px; border-radius: 9px; background: var(--hover); min-width: 0; }
+.seg button { flex: 1; min-width: 0; min-height: 32px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seg button[aria-pressed="true"] { background: var(--panel); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
 .clip-row { display: flex; align-items: center; gap: 4px; padding-right: 4px; }
 #clip-range { flex: 1; min-width: 0; height: 32px; accent-color: var(--accent); }
 .chips { display: flex; gap: 6px; align-items: center; overflow-x: auto; scrollbar-width: none; padding-right: 6px; }
@@ -223,6 +229,54 @@ button { font: inherit; color: inherit; }
 .drop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 22%, transparent);
   font-family: var(--f-display); font-size: 26px; font-weight: 600; color: var(--ink); border: 3px dashed var(--accent); }
 
+
+/* BCF */
+.count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 600; box-sizing: border-box; }
+.bcf-new { justify-self: start; margin-top: 6px; }
+.bcf-bar { display: flex; flex-wrap: wrap; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 2; }
+.bcf-bar label.sbtn { display: inline-flex; align-items: center; }
+.sbtn:disabled { opacity: 0.4; cursor: default; }
+.topics { list-style: none; margin: 0; padding: 0; }
+.topic { width: 100%; display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 12px; padding: 12px 16px; border: 0; border-bottom: 1px solid var(--line); background: transparent; text-align: left; cursor: pointer; }
+.topic:hover { background: var(--hover); }
+.topic-thumb { width: 88px; aspect-ratio: 4 / 3; border-radius: 8px; overflow: hidden; background: var(--ground); border: 1px solid var(--line); max-width: 100%; }
+.topic-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.topic-body { display: grid; gap: 3px; min-width: 0; align-content: start; }
+.topic-title { font-weight: 600; overflow-wrap: anywhere; }
+.topic-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.topic-el, .topic-date { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 10px; font-size: 11px; font-weight: 600; letter-spacing: 0.02em; border: 1px solid currentColor; }
+.st-open { color: var(--accent); }
+.st-progress { color: var(--warn); }
+.st-resolved { color: var(--ok); }
+.st-closed { color: var(--muted); }
+.bcf-detail { padding: 16px; display: grid; gap: 12px; }
+.bcf-shot { width: 100%; max-width: 100%; max-height: 240px; object-fit: contain; border-radius: 10px; border: 1px solid var(--line); display: block; background: var(--ground); }
+.fld { display: grid; gap: 4px; min-width: 0; }
+.fld-l { font-size: 12px; color: var(--muted); font-weight: 500; }
+.fld input, .fld select, .fld textarea, .comment-new textarea { font: inherit; font-size: 16px; color: var(--ink); background: var(--ground); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 40px; box-sizing: border-box; width: 100%; min-width: 0; }
+.fld textarea, .comment-new textarea { resize: vertical; min-height: 64px; }
+.fld-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.group-title.flush { padding: 8px 0 0; }
+.comments { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.comment { padding: 10px 12px; border-radius: 10px; background: var(--ground); border: 1px solid var(--line); }
+.comment-meta { font-size: 12px; color: var(--muted); }
+.comment-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.comment-new { display: grid; gap: 8px; justify-items: end; }
+.danger { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
+.danger-link { color: var(--error); }
+.danger-btn { background: var(--error); color: #fff; border-color: transparent; }
+.modal { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); background: rgba(10, 14, 13, 0.45); box-sizing: border-box; }
+.modal-card { width: min(520px, 100%); max-height: 100%; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 12px 12px 18px; border-bottom: 1px solid var(--line); }
+.modal-title { margin: 0; font-family: var(--f-display); font-size: 20px; font-weight: 600; }
+.modal-body { padding: 16px 18px; display: grid; gap: 12px; overflow-y: auto; min-height: 0; }
+.modal-body .bcf-shot { max-height: 200px; object-fit: cover; }
+.modal-body .el-storey { margin: 0; }
+.modal-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid var(--line); }
+.small { font-size: 12px; }
+.form-error { margin: 0; color: var(--error); font-size: 13px; }
+@media (max-width: 719px) { .fld-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 719px) {
   :root { --panel-w: 100%; }
   .main, #app:not(.sheet-open) .main { grid-template-columns: minmax(0, 1fr); }
@@ -233,6 +287,8 @@ button { font: inherit; color: inherit; }
   .file { display: none; }
   .open-label { display: none; }
   .btn.primary { padding: 0 12px; }
+  .seg button { font-size: 12px; padding: 0 3px; }
+  .clip-pop .sbtn { padding: 0 9px; }
 }
 @media (min-width: 720px) { .file { display: block; } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } .panel { transition: none !important; } }
@@ -281,22 +337,30 @@ button { font: inherit; color: inherit; }
 
         <div class="card clip-pop" id="clip-pop" hidden>
           <div class="clip-head">
-            <strong>Řez</strong>
-            <span class="clip-val" id="clip-value"></span>
-            <span class="clip-sub grow">nad spodní hranou</span>
+            <div class="seg grow" role="group" aria-label="Typ řezu">
+              <button type="button" data-mode="h" aria-pressed="true">Vodorovný</button>
+              <button type="button" data-mode="cross" aria-pressed="false">Příčný</button>
+              <button type="button" data-mode="long" aria-pressed="false">Podélný</button>
+            </div>
             <button class="ib" id="clip-collapse" type="button" aria-label="Sbalit panel řezu (řez zůstane)"><svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></button>
             <button class="ib" id="clip-off" type="button" aria-label="Vypnout řez"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
           </div>
-          <div class="clip-row">
-            <button class="ib" id="clip-down" type="button" aria-label="Řez o 10 cm níž"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
-            <input id="clip-range" type="range" min="0" max="10" step="0.01" value="10" aria-label="Výška řezu">
-            <button class="ib" id="clip-up" type="button" aria-label="Řez o 10 cm výš"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
+          <div class="clip-head">
+            <span class="clip-val" id="clip-value"></span>
+            <span class="clip-sub grow" id="clip-sub">nad spodní hranou</span>
+            <button class="sbtn" id="clip-flip" type="button" title="Ponechat druhou polovinu modelu">Otočit</button>
+            <button class="sbtn" id="clip-view" type="button" title="Natočit pohled kolmo na řez">Pohled</button>
           </div>
-          <div class="chips"><span class="chips-label">Půdorys:</span><span class="chips" id="clip-chips"></span></div>
+          <div class="clip-row">
+            <button class="ib" id="clip-down" type="button" aria-label="Posunout řez o 10 cm zpět"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></button>
+            <input id="clip-range" type="range" min="0" max="10" step="0.01" value="10" aria-label="Poloha řezu">
+            <button class="ib" id="clip-up" type="button" aria-label="Posunout řez o 10 cm dál"><svg viewBox="0 0 24 24"><path d="M5 12h14M12 5v14"/></svg></button>
+          </div>
+          <div class="chips" id="clip-chips-row"><span class="chips-label">Půdorys:</span><span class="chips" id="clip-chips"></span></div>
         </div>
 
         <button class="card mini" id="clip-mini" type="button" hidden aria-label="Rozbalit panel řezu">
-          <b>Řez</b><span class="clip-val" id="clip-mini-value"></span>
+          <b id="clip-mini-mode">Vodorovný</b><span class="clip-val" id="clip-mini-value"></span>
           <span class="ib" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></span>
         </button>
       </div>
@@ -326,12 +390,42 @@ button { font: inherit; color: inherit; }
       <div class="tabs" role="tablist">
         <button class="tab" type="button" role="tab" data-tab="model" aria-selected="true">Model</button>
         <button class="tab" type="button" role="tab" data-tab="props" aria-selected="false">Vlastnosti</button>
+        <button class="tab" type="button" role="tab" data-tab="bcf" aria-selected="false">BCF <span class="count" id="bcf-count" hidden></span></button>
       </div>
       <div class="panel-body" id="panel-model"></div>
       <div class="panel-body" id="panel-props" hidden></div>
+      <div class="panel-body" id="panel-bcf" hidden></div>
     </aside>
   </div>
-  <div class="drop" id="drop" hidden>Pusťte IFC soubor sem</div>
+  <div class="drop" id="drop" hidden>Pusťte sem IFC nebo BCF soubor</div>
+  <input class="sr-only" id="bcf-input" type="file">
+
+  <div class="modal" id="bcf-modal" hidden>
+    <form class="modal-card" id="bcf-form" novalidate>
+      <div class="modal-head">
+        <h2 class="modal-title">Nový BCF záznam</h2>
+        <button class="ib" id="bcf-cancel" type="button" aria-label="Zavřít bez uložení"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <img class="bcf-shot" id="bcf-f-shot" alt="Snímek aktuálního pohledu" hidden>
+        <p class="el-storey" id="bcf-f-element"></p>
+        <label class="fld"><span class="fld-l">Název *</span><input id="bcf-f-title" autocomplete="off" placeholder="Např. Chybí požární ucpávka"></label>
+        <div class="fld-grid">
+          <label class="fld"><span class="fld-l">Typ</span><select id="bcf-f-type"></select></label>
+          <label class="fld"><span class="fld-l">Priorita</span><select id="bcf-f-priority"></select></label>
+          <label class="fld"><span class="fld-l">Stav</span><select id="bcf-f-status"></select></label>
+          <label class="fld"><span class="fld-l">Přiřazeno</span><input id="bcf-f-assigned" autocomplete="off" placeholder="e-mail nebo jméno"></label>
+        </div>
+        <label class="fld"><span class="fld-l">Popis</span><textarea id="bcf-f-desc" rows="3"></textarea></label>
+        <label class="fld"><span class="fld-l">Autor *</span><input id="bcf-f-author" autocomplete="email" placeholder="jmeno@muni.cz"></label>
+        <p class="form-error" id="bcf-f-error" role="alert" hidden></p>
+      </div>
+      <div class="modal-foot">
+        <span class="muted small">Uloží se pohled, řez, vybraný prvek a snímek.</span>
+        <button class="sbtn primary" type="submit">Uložit záznam</button>
+      </div>
+    </form>
+  </div>
 </div>
 <script src="app.js"></script>
 <script>

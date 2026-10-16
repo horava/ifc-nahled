@@ -6,7 +6,9 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - 3D zobrazení s dotykovým ovládáním: jeden prst otáčí, dva prsty posouvají a zoomují, klepnutí vybere prvek
 - vlastnosti prvku: atributy, GlobalId, materiál, všechny Psety a Qsety včetně vlastností typu
 - filtrování podle podlaží a kategorií IFC, skrytí a izolace prvků
-- vodorovný řez a půdorys podlaží
+- vodorovný, příčný a podélný řez, půdorys podlaží
+- měření vzdáleností s přichytáváním k rohům
+- BCF 2.1: záznamy k prvkům (pohled, řez, vybraný prvek, snímek), komentáře, export a import `.bcfzip`
 - práci offline po prvním otevření
 
 ## Zveřejnění na GitHub Pages
@@ -48,6 +50,12 @@ npm run build        # vytvoří app.js a zkopíruje web-ifc.wasm
 python src/make_sample.py sample.ifc
 ```
 
+## BCF
+
+Záznamy se ukládají v prohlížeči na iPadu (IndexedDB) a jsou svázané s projektem v IFC (GlobalId IfcProject), takže se po znovuotevření stejného modelu objeví znovu. Export vytvoří soubor `.bcfzip` (BCF 2.1), který na iPadu nabídne panel Sdílet (Uložit do Souborů, Mail, Teams…). Import přijímá `.bcfzip` z jiných nástrojů, například BIMcollab, Solibri nebo Trimble Connect.
+
+Pozor: smazáním dat Safari pro tento web se smažou i neexportované záznamy. Důležité záznamy průběžně exportuj.
+
 ## Omezení
 
 - Velké modely (stovky MB) mohou překročit paměť Safari. Pomůže vypnout hrany nebo skrýt část podlaží.
@@ -56,5 +64,6 @@ python src/make_sample.py sample.ifc
 ## Licence knihoven
 
 - three.js: MIT
+- fflate: MIT
 - web-ifc: MPL-2.0
 - IBM Plex: SIL Open Font License
