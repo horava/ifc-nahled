@@ -4,7 +4,7 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 
 **Umí:**
 - 3D zobrazení s dotykovým ovládáním: jeden prst otáčí, dva prsty posouvají a zoomují (zoom míří k prstům a projde i skrz řez nebo stěnu), klepnutí vybere prvek
-- náhled půdorysu s polohou a směrem kamery; klepnutím do půdorysu se přesuneš na místo ve výšce očí
+- půdorys na rozdělené obrazovce (vedle 3D na šířku, pod ním na výšku) s přetahovatelným předělem; posun a zoom půdorysu, poloha a směr kamery, klepnutím se přesuneš na místo ve výšce očí
 - otáčení kolem vybraného prvku (přepínač Kolem prvku), dvojité klepnutí nastaví střed otáčení na bod modelu
 - vlastnosti prvku: atributy, GlobalId, materiál, všechny Psety a Qsety včetně vlastností typu
 - strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků

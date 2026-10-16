@@ -50,7 +50,7 @@ const S = {
   measure: { on: false, first: null, list: [] },
 };
 
-const plan = { on: false, storey: 'auto', shown: null, rt: null, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10000), bounds: null, dirty: true, timer: 0 };
+const plan = { on: false, storey: 'auto', shown: null, rt: null, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10000), view: null, imgView: null, fitPpm: 0, dirty: true, timer: 0 };
 
 /* ---------- three setup ---------- */
 const viewport = $('#viewport');
@@ -338,8 +338,8 @@ async function loadIfc(buffer, fileName) {
     renderModelPanel();
     renderProps();
     if (!$('#panel-tree').hidden) renderTree();
-    plan.storey = 'auto'; plan.shown = null;
-    if (plan.on) { fillPlanSelect(); markPlanDirty(); }
+    plan.storey = 'auto'; plan.shown = null; plan.view = null;
+    if (plan.on) { fillPlanSelect(); fitPlan(); markPlanDirty(0); }
     $('#file-name').textContent = fileName;
     $('#file-name').title = fileName;
     $('#empty-hint').hidden = true;
@@ -398,6 +398,7 @@ function select(id, opts = {}) {
   renderProps();
   updateRotLabel();
   if (!$('#panel-tree').hidden) renderTree(true);
+  if (plan.on) markPlanDirty(60);
 }
 function deselect(render = true) {
   if (S.selected != null) {
@@ -408,6 +409,7 @@ function deselect(render = true) {
   if (render) {
     updateToolbar(); renderProps(); requestRender(); updateRotLabel();
     if (!$('#panel-tree').hidden) renderTree();
+    if (plan.on) markPlanDirty(60);
   }
 }
 
@@ -1207,12 +1209,19 @@ async function copy(text, btn) {
   setTimeout(() => { lab.textContent = 'Kopírovat'; }, 1600);
 }
 
-/* ---------- náhled půdorysu ---------- */
+/* ---------- půdorys (rozdělená obrazovka) ---------- */
 const planBox = $('#plan');
+const planViewEl = $('#plan-view');
 const planCanvas = $('#plan-canvas');
 const planSvg = $('#plan-svg');
 const planSel = $('#plan-storey');
+const splitEl = $('#split');
+const dividerEl = $('#divider');
+const stageEl = document.querySelector('.stage');
 const planCutPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+let splitRatio = 0.55;
+try { const r = Number(localStorage.getItem('ifc-nahled-split')); if (r > 0.15 && r < 0.9) splitRatio = r; } catch (e) { /* ignore */ }
+
 function storeyFloors() {
   return S.storeys.filter((s) => s.id !== -1).map((s) => {
     const cut = storeyCutHeight(s);
@@ -1236,11 +1245,97 @@ function fillPlanSelect() {
   if (planSel.value !== plan.storey) { plan.storey = 'auto'; planSel.value = 'auto'; }
 }
 planSel.addEventListener('change', () => { plan.storey = planSel.value; plan.dirty = true; updatePlan(); });
-function markPlanDirty() { plan.dirty = true; if (plan.on) { clearTimeout(plan.timer); plan.timer = setTimeout(updatePlan, 120); } }
+function markPlanDirty(delay = 120) {
+  plan.dirty = true;
+  if (plan.on) { clearTimeout(plan.timer); plan.timer = setTimeout(updatePlan, delay); }
+}
+
+/* rozložení: na šířku vedle sebe, na výšku pod sebou */
+function layoutSplit() {
+  const r = stageEl.getBoundingClientRect();
+  const row = r.width >= r.height * 0.9;
+  splitEl.classList.toggle('sp-row', row);
+  splitEl.classList.toggle('sp-col', !row);
+  dividerEl.setAttribute('aria-orientation', row ? 'vertical' : 'horizontal');
+  splitEl.style.setProperty('--r3d', `${splitRatio}fr`);
+  splitEl.style.setProperty('--rplan', `${1 - splitRatio}fr`);
+}
+new ResizeObserver(() => { if (plan.on) { layoutSplit(); markPlanDirty(200); } }).observe(stageEl);
+function setSplit(r, save) {
+  splitRatio = THREE.MathUtils.clamp(r, 0.2, 0.85);
+  layoutSplit();
+  if (save) { try { localStorage.setItem('ifc-nahled-split', String(splitRatio)); } catch (e) { /* ignore */ } }
+}
+dividerEl.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  dividerEl.setPointerCapture(e.pointerId);
+  dividerEl.classList.add('dragging');
+  const move = (ev) => {
+    const r = splitEl.getBoundingClientRect();
+    const row = splitEl.classList.contains('sp-row');
+    setSplit(row ? (ev.clientX - r.left) / r.width : (ev.clientY - r.top) / r.height, false);
+  };
+  const up = () => {
+    dividerEl.classList.remove('dragging');
+    dividerEl.removeEventListener('pointermove', move);
+    dividerEl.removeEventListener('pointerup', up);
+    dividerEl.removeEventListener('pointercancel', up);
+    setSplit(splitRatio, true);
+    markPlanDirty(0);
+  };
+  dividerEl.addEventListener('pointermove', move);
+  dividerEl.addEventListener('pointerup', up);
+  dividerEl.addEventListener('pointercancel', up);
+});
+dividerEl.addEventListener('dblclick', () => { setSplit(0.55, true); markPlanDirty(0); });
+dividerEl.addEventListener('keydown', (e) => {
+  const d = { ArrowLeft: -0.05, ArrowUp: -0.05, ArrowRight: 0.05, ArrowDown: 0.05 }[e.key];
+  if (d) { e.preventDefault(); setSplit(splitRatio + d, true); markPlanDirty(150); }
+});
+
+/* pohled půdorysu: střed (cx, cz) a měřítko ppm (px na metr) */
+function planSize() { return { w: planViewEl.clientWidth, h: planViewEl.clientHeight }; }
+function fitPlan() {
+  const { w, h } = planSize();
+  if (!w || !h || S.bbox.isEmpty()) return;
+  const b = S.bbox;
+  const bw = (b.max.x - b.min.x) * 1.08 || 1, bh = (b.max.z - b.min.z) * 1.08 || 1;
+  plan.view = { cx: (b.min.x + b.max.x) / 2, cz: (b.min.z + b.max.z) / 2, ppm: Math.min(w / bw, h / bh) };
+  plan.fitPpm = plan.view.ppm;
+}
+function planXY(x, z) {
+  const v = plan.view, { w, h } = planSize();
+  return { x: (x - v.cx) * v.ppm + w / 2, y: (z - v.cz) * v.ppm + h / 2 };
+}
+function planWorld(px, py) {
+  const v = plan.view, { w, h } = planSize();
+  return { x: v.cx + (px - w / 2) / v.ppm, z: v.cz + (py - h / 2) / v.ppm };
+}
+function applyPlanTransform() {
+  const v = plan.view, im = plan.imgView;
+  if (!v || !im) return;
+  const { w, h } = planSize();
+  const s = v.ppm / im.ppm;
+  const tx = w / 2 - s * im.w / 2 + (im.cx - v.cx) * v.ppm;
+  const ty = h / 2 - s * im.h / 2 + (im.cz - v.cz) * v.ppm;
+  planCanvas.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+  updatePlanScale();
+  updatePlanMarker();
+}
+function updatePlanScale() {
+  const ppm = plan.view?.ppm;
+  if (!ppm) return;
+  const steps = [0.25, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+  const L = steps.find((m) => m * ppm >= 70) || steps[steps.length - 1];
+  const sc = $('#plan-scale');
+  sc.style.width = `${L * ppm}px`;
+  sc.textContent = L < 1 ? `${L * 100} cm` : `${L} m`;
+}
 
 function renderPlanImage(f) {
-  const w = planCanvas.clientWidth, h = planCanvas.clientHeight;
+  const { w, h } = planSize();
   if (!w || !h || S.bbox.isEmpty()) return;
+  if (!plan.view) fitPlan();
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const W = Math.round(w * dpr), H = Math.round(h * dpr);
   if (!plan.rt || plan.rt.width !== W || plan.rt.height !== H) {
@@ -1248,101 +1343,154 @@ function renderPlanImage(f) {
     plan.rt = new THREE.WebGLRenderTarget(W, H, { samples: 4 });
     plan.rt.texture.colorSpace = THREE.SRGBColorSpace;
   }
-  // ortho kamera shora, sever (+Y v IFC = −Z ve scéně) nahoře
-  const b = S.bbox, pad = 0.04 * Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
-  let x0 = b.min.x - pad, x1 = b.max.x + pad, z0 = b.min.z - pad, z1 = b.max.z + pad;
-  const aspect = W / H, bw = x1 - x0, bh = z1 - z0;
-  if (bw / bh > aspect) { const nh = bw / aspect; z0 -= (nh - bh) / 2; z1 += (nh - bh) / 2; } else { const nw = bh * aspect; x0 -= (nw - bw) / 2; x1 += (nw - bw) / 2; }
-  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const v = plan.view, b = S.bbox;
   const oc = plan.cam;
-  oc.left = -(x1 - x0) / 2; oc.right = (x1 - x0) / 2; oc.top = (z1 - z0) / 2; oc.bottom = -(z1 - z0) / 2;
-  oc.position.set(cx, b.max.y + 50, cz);
-  oc.up.set(0, 0, -1);
-  oc.lookAt(cx, b.min.y - 10, cz);
+  oc.left = -w / 2 / v.ppm; oc.right = w / 2 / v.ppm; oc.top = h / 2 / v.ppm; oc.bottom = -h / 2 / v.ppm;
+  oc.position.set(v.cx, b.max.y + 50, v.cz);
+  oc.up.set(0, 0, -1); // sever (+Y v IFC = −Z ve scéně) nahoře
+  oc.lookAt(v.cx, b.min.y - 10, v.cz);
   oc.near = 1; oc.far = b.max.y - b.min.y + 100;
   oc.updateProjectionMatrix(); oc.updateMatrixWorld();
-  plan.bounds = { x0, x1, z0, z1 };
   planCutPlane.constant = f.cut;
-  // render: jen řez půdorysu (uživatelův svislý řez ignorujeme), bez výběru a měření
   const prevBg = scene.background;
   scene.background = new THREE.Color(cssVar('--panel') || '#f8faf9');
-  const selRec = S.selected != null ? S.elements.get(S.selected) : null;
-  if (selRec) selRec.meshes.forEach((m) => { if (m.userData.mat) m.material = m.userData.mat; });
   renderer.setRenderTarget(plan.rt);
   renderer.clippingPlanes = [planCutPlane];
   renderer.clear();
   renderer.render(scene, oc);
   renderer.setRenderTarget(null);
   renderer.clippingPlanes = [];
-  if (selRec) selRec.meshes.forEach((m) => { m.material = selMat; });
   scene.background = prevBg;
   const px = new Uint8Array(W * H * 4);
   renderer.readRenderTargetPixels(plan.rt, 0, 0, W, H, px);
   planCanvas.width = W; planCanvas.height = H;
+  planCanvas.style.width = `${w}px`; planCanvas.style.height = `${h}px`;
   const ctx = planCanvas.getContext('2d');
   const img = ctx.createImageData(W, H);
   for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
   ctx.putImageData(img, 0, 0);
+  plan.imgView = { ...v, w, h };
+  applyPlanTransform();
   requestRender();
 }
 function updatePlan() {
   if (!plan.on || S.modelID == null) return;
   const f = planStorey();
   if (!f) { $('#plan-label').textContent = 'Model nemá podlaží'; return; }
-  $('#plan-label').textContent = f.st.name;
+  $('#plan-label').textContent = plan.storey === 'auto' ? f.st.name : '';
   if (plan.dirty || plan.shown !== f.st.id) {
     plan.shown = f.st.id; plan.dirty = false;
     renderPlanImage(f);
   }
   updatePlanMarker();
 }
-function planXY(x, z) {
-  const B = plan.bounds, w = planCanvas.clientWidth, h = planCanvas.clientHeight;
-  return { x: (x - B.x0) / (B.x1 - B.x0) * w, y: (z - B.z0) / (B.z1 - B.z0) * h };
-}
 function updatePlanMarker() {
-  if (!plan.on || !plan.bounds) return;
-  if (plan.storey === 'auto') { const f = planStorey(); if (f && f.st.id !== plan.shown) { updatePlan(); return; } }
+  if (!plan.on || !plan.view) return;
+  if (plan.storey === 'auto') { const f = planStorey(); if (f && f.st.id !== plan.shown) { markPlanDirty(0); } }
   const p = planXY(camera.position.x, camera.position.z);
   const d = camera.getWorldDirection(new THREE.Vector3());
   const yaw = Math.atan2(d.z, d.x);
   const hf = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect);
-  const L = 34;
+  const L = 44;
   const a1 = { x: p.x + Math.cos(yaw - hf) * L, y: p.y + Math.sin(yaw - hf) * L };
   const a2 = { x: p.x + Math.cos(yaw + hf) * L, y: p.y + Math.sin(yaw + hf) * L };
-  const w = planCanvas.clientWidth, h = planCanvas.clientHeight;
-  const inside = p.x >= 0 && p.y >= 0 && p.x <= w && p.y <= h;
+  const { w, h } = planSize();
+  const inside = p.x >= -20 && p.y >= -20 && p.x <= w + 20 && p.y <= h + 20;
   planSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   planSvg.innerHTML = inside
-    ? `<path d="M${p.x},${p.y} L${a1.x},${a1.y} A${L},${L} 0 0 1 ${a2.x},${a2.y} Z" class="pm-cone"/><circle cx="${p.x}" cy="${p.y}" r="6" class="pm-dot"/>`
+    ? `<path d="M${p.x},${p.y} L${a1.x},${a1.y} A${L},${L} 0 0 1 ${a2.x},${a2.y} Z" class="pm-cone"/><circle cx="${p.x}" cy="${p.y}" r="7" class="pm-dot"/>`
     : '';
 }
 function togglePlan(force) {
   plan.on = force ?? !plan.on;
+  splitEl.classList.toggle('on', plan.on);
   planBox.hidden = !plan.on;
+  dividerEl.hidden = !plan.on;
   $('#btn-plan').setAttribute('aria-pressed', String(plan.on));
-  if (plan.on) { fillPlanSelect(); plan.dirty = true; requestAnimationFrame(updatePlan); }
+  if (plan.on) {
+    layoutSplit();
+    fillPlanSelect();
+    plan.view = null; plan.dirty = true;
+    requestAnimationFrame(() => { fitPlan(); updatePlan(); });
+  }
 }
 $('#btn-plan').addEventListener('click', () => togglePlan());
 $('#plan-close').addEventListener('click', () => togglePlan(false));
-/* klepnutí do půdorysu: kamera se přesune na místo ve výšce očí (1,6 m nad podlahou), směr pohledu zůstane */
-planCanvas.addEventListener('click', (e) => {
-  if (!plan.bounds) return;
-  const r = planCanvas.getBoundingClientRect();
-  const B = plan.bounds;
-  const x = B.x0 + (e.clientX - r.left) / r.width * (B.x1 - B.x0);
-  const z = B.z0 + (e.clientY - r.top) / r.height * (B.z1 - B.z0);
+$('#plan-fit').addEventListener('click', () => { fitPlan(); markPlanDirty(0); applyPlanTransform(); });
+
+/* ovládání půdorysu: tah = posun, dva prsty / kolečko = zoom, klepnutí = přesun kamery */
+const pp = new Map();
+let pDrag = null, pPinch = null;
+function zoomPlanAt(px, py, k) {
+  const v = plan.view;
+  if (!v) return;
+  const wpt = planWorld(px, py);
+  const minP = (plan.fitPpm || v.ppm) / 3, maxP = 600;
+  v.ppm = THREE.MathUtils.clamp(v.ppm * k, minP, maxP);
+  const { w, h } = planSize();
+  v.cx = wpt.x - (px - w / 2) / v.ppm;
+  v.cz = wpt.z - (py - h / 2) / v.ppm;
+  applyPlanTransform();
+  markPlanDirty(180);
+}
+function localXY(e) { const r = planViewEl.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+planViewEl.addEventListener('pointerdown', (e) => {
+  planViewEl.setPointerCapture(e.pointerId);
+  pp.set(e.pointerId, localXY(e));
+  if (pp.size === 1) { const p = localXY(e); pDrag = { x: p.x, y: p.y, sx: p.x, sy: p.y, moved: false }; pPinch = null; }
+  else if (pp.size === 2) { pDrag = null; pPinch = null; }
+});
+planViewEl.addEventListener('pointermove', (e) => {
+  if (!pp.has(e.pointerId) || !plan.view) return;
+  pp.set(e.pointerId, localXY(e));
+  if (pp.size === 1 && pDrag) {
+    const p = localXY(e);
+    if (!pDrag.moved && Math.hypot(p.x - pDrag.sx, p.y - pDrag.sy) < 6) return;
+    pDrag.moved = true;
+    plan.view.cx -= (p.x - pDrag.x) / plan.view.ppm;
+    plan.view.cz -= (p.y - pDrag.y) / plan.view.ppm;
+    pDrag.x = p.x; pDrag.y = p.y;
+    applyPlanTransform();
+    markPlanDirty(180);
+  } else if (pp.size === 2) {
+    const [a, b] = [...pp.values()];
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pPinch && d > 10) {
+      plan.view.cx -= (mid.x - pPinch.mid.x) / plan.view.ppm;
+      plan.view.cz -= (mid.y - pPinch.mid.y) / plan.view.ppm;
+      zoomPlanAt(mid.x, mid.y, d / pPinch.d);
+    }
+    pPinch = { mid, d };
+  }
+});
+const planUp = (e) => {
+  const wasTap = pp.size === 1 && pDrag && !pDrag.moved && e.type === 'pointerup';
+  pp.delete(e.pointerId);
+  pPinch = null;
+  if (pp.size === 0) { const tap = wasTap; pDrag = null; if (tap) planTeleport(localXY(e)); }
+  else pDrag = null;
+};
+planViewEl.addEventListener('pointerup', planUp);
+planViewEl.addEventListener('pointercancel', planUp);
+planViewEl.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  const p = localXY(e);
+  zoomPlanAt(p.x, p.y, Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)));
+}, { passive: false });
+/* klepnutí: kamera na místo ve výšce očí (1,6 m nad podlahou), směr pohledu zůstane */
+function planTeleport(p) {
+  if (!plan.view) return;
+  const wpt = planWorld(p.x, p.y);
   const f = planStorey();
   const eye = f ? f.floor + 1.6 : camera.position.y;
   const d = camera.getWorldDirection(new THREE.Vector3());
   d.y = 0;
   if (d.lengthSq() < 1e-4) d.set(0, 0, -1);
   d.normalize();
-  if (plan.storey === 'auto' && f) plan.storey = String(f.st.id), planSel.value = plan.storey;
-  const pos = new THREE.Vector3(x, eye, z);
-  tween(pos, pos.clone().addScaledVector(d, S.minStep * 4), true);
-});
-new ResizeObserver(() => markPlanDirty()).observe(planCanvas);
+  if (plan.storey === 'auto' && f) { plan.storey = String(f.st.id); planSel.value = plan.storey; }
+  const pos = new THREE.Vector3(wpt.x, eye, wpt.z);
+  tween(pos, pos.clone().addScaledVector(d, (S.minStep || 0.5) * 4), true);
+}
 
 /* ---------- IFC tree ---------- */
 const SPATIAL = new Set(['IFCPROJECT', 'IFCSITE', 'IFCBUILDING', 'IFCBUILDINGSTOREY', 'IFCSPACE', 'IFCFACILITY', 'IFCFACILITYPART', 'IFCBRIDGE', 'IFCROAD', 'IFCRAILWAY']);
