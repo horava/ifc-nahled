@@ -1,0 +1,14 @@
+{
+  "name": "ifc-nahled",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --format=iife --minify --target=safari15 --outfile=app.js && cp node_modules/web-ifc/web-ifc.wasm ."
+  },
+  "dependencies": {
+    "three": "0.180.0",
+    "web-ifc": "0.0.77"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.0"
+  }
+}

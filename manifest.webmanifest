@@ -1,0 +1,17 @@
+{
+  "name": "IFC Náhled",
+  "short_name": "IFC Náhled",
+  "description": "Offline prohlížeč IFC modelů. Modely se zpracují přímo v zařízení.",
+  "lang": "cs",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#DCE1DE",
+  "theme_color": "#DCE1DE",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

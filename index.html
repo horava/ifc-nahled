@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>IFC Náhled</title>
+<meta name="description" content="Offline prohlížeč IFC modelů pro iPad. Modely se zpracují přímo v zařízení.">
+<meta name="theme-color" content="#DCE1DE" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121615" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="IFC Náhled">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="fonts/fonts.css">
+<style>
+:root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); box-sizing: border-box; height: 100%; }
+body { margin: 0; }
+[hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<style>
+/* Layout: one-screen app — header row, then 3D stage + side panel (bottom sheet on phones). Concrete-grey neutrals, site-orange for selection and actions. */
+:root {
+  --bg: #DCE1DE;
+  --ground: #EEF1EF;
+  --panel: #F8FAF9;
+  --ink: #18211F;
+  --muted: #5B6864;
+  --line: #CCD4D0;
+  --hover: #E7ECE9;
+  --accent: #C94A10;
+  --accent-ink: #FFFFFF;
+  --sel: #FF7A1A;
+  --edge: #24302C;
+  --glass: rgba(248, 250, 249, 0.86);
+  --error: #B42318;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --r: 14px;
+  --panel-w: 352px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121615; --ground: #1B2120; --panel: #1F2624; --ink: #E6ECE9; --muted: #95A39E; --line: #313B38;
+    --hover: #28302E; --accent: #FF8A3D; --accent-ink: #1A1206; --sel: #FF8A3D; --edge: #050807;
+    --glass: rgba(31, 38, 36, 0.86); --error: #FF8B7E; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121615; --ground: #1B2120; --panel: #1F2624; --ink: #E6ECE9; --muted: #95A39E; --line: #313B38;
+  --hover: #28302E; --accent: #FF8A3D; --accent-ink: #1A1206; --sel: #FF8A3D; --edge: #050807;
+  --glass: rgba(31, 38, 36, 0.86); --error: #FF8B7E; color-scheme: dark;
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.45;
+  overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent;
+}
+button { font: inherit; color: inherit; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#app {
+  box-sizing: border-box; height: 100%;
+  display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 12px;
+  padding-block: 12px 16px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+
+/* header */
+.bar { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 10px; flex: none; }
+.brand svg { width: 28px; height: 28px; }
+.brand-name { font-family: var(--f-display); font-weight: 600; font-size: 20px; letter-spacing: 0.01em; }
+.file { min-width: 0; flex: 1; font-family: var(--f-mono); font-size: 13px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px;
+  border-radius: 10px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-weight: 500; flex: none; }
+.btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.btn.icon { padding: 0; width: 44px; margin-left: auto; }
+
+/* main */
+.main { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) var(--panel-w); gap: 12px; min-height: 0; }
+#app:not(.sheet-open) .main { grid-template-columns: minmax(0, 1fr); }
+#app:not(.sheet-open) .panel { display: none; }
+.stage { position: relative; min-height: 0; border-radius: var(--r); overflow: hidden; border: 1px solid var(--line); background: var(--ground); }
+#viewport { position: absolute; inset: 0; }
+#viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+
+.badge { position: absolute; top: 12px; left: 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  max-width: calc(100% - 24px); box-sizing: border-box; padding: 6px 12px 6px 6px; border-radius: 12px; background: var(--glass);
+  border: 1px solid var(--line); font-size: 13px; color: var(--muted); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.badge b { font-weight: 600; color: var(--accent-ink); background: var(--accent); border-radius: 999px; padding: 2px 10px; font-size: 12px;
+  letter-spacing: 0.04em; text-transform: uppercase; }
+
+.empty { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; gap: 8px; padding: 24px; color: var(--muted); }
+.empty strong { font-family: var(--f-display); font-size: 22px; color: var(--ink); font-weight: 600; }
+
+/* toolbar */
+.toolbar { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; align-items: stretch; gap: 2px;
+  padding: 6px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
+.toolbar::-webkit-scrollbar { display: none; }
+.tool { flex: none; display: grid; justify-items: center; align-content: center; gap: 2px; min-width: 56px; height: 52px; padding: 0 6px;
+  border: 0; border-radius: 10px; background: transparent; cursor: pointer; color: var(--ink); }
+.tool svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.tool span { font-size: 11px; font-weight: 500; letter-spacing: 0.01em; }
+.tool:hover:not(:disabled) { background: var(--hover); }
+.tool[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+.tool:disabled { opacity: 0.35; cursor: default; }
+.sep { flex: none; width: 1px; margin: 8px 4px; background: var(--line); }
+
+.clip-pop { position: absolute; left: 50%; bottom: 82px; transform: translateX(-50%); width: min(440px, calc(100% - 24px)); box-sizing: border-box;
+  padding: 14px 16px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); display: grid; gap: 10px; }
+.clip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.clip-head strong { font-family: var(--f-display); font-weight: 600; font-size: 16px; }
+#clip-value { font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#clip-range { width: 100%; height: 32px; accent-color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chips-label { font-size: 12px; color: var(--muted); margin-right: 2px; }
+.chip { min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 13px; }
+
+/* panel */
+.panel { display: flex; flex-direction: column; min-height: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+.tabs { display: flex; flex: none; border-bottom: 1px solid var(--line); }
+.tab { flex: 1; min-height: 48px; border: 0; background: transparent; cursor: pointer; font-weight: 500; color: var(--muted);
+  border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.panel-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.muted { color: var(--muted); }
+.pad { padding: 16px; margin: 0; }
+
+.summary { padding: 16px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }
+.summary-title { font-family: var(--f-display); font-size: 20px; font-weight: 600; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.facts { display: grid; grid-template-columns: auto 1fr; gap: 4px 16px; margin: 0; font-size: 13px; }
+.facts dt { color: var(--muted); }
+.facts dd { margin: 0; font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+.notice { margin: 12px 16px 0; padding: 10px 12px; border-radius: 10px; background: var(--hover); font-size: 13px;
+  display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.link { border: 0; background: none; color: var(--accent); font-weight: 600; cursor: pointer; padding: 6px 0; min-height: 36px; }
+
+.group { padding: 8px 0 4px; }
+.group-title, .pset-title { margin: 0; padding: 12px 16px 6px; font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.rows { list-style: none; margin: 0; padding: 0; }
+.row { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto auto; align-items: center; gap: 4px; padding-right: 8px; min-height: 48px; }
+.row + .row { border-top: 1px solid var(--line); }
+.eye { width: 44px; height: 44px; border: 0; background: transparent; cursor: pointer; display: grid; place-items: center; color: var(--ink); }
+.eye svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.row-name { min-width: 0; display: grid; }
+.row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.row-sub { font-family: var(--f-mono); font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row-count { font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; padding: 0 4px; }
+.only { min-height: 36px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--line); background: transparent; cursor: pointer; font-size: 12px; color: var(--muted); }
+.row.is-off .row-label, .row.is-off .eye { color: var(--muted); opacity: 0.6; }
+
+.props-empty { padding: 28px 20px; display: grid; gap: 6px; }
+.props-empty p { margin: 0; }
+.props-empty-title { font-family: var(--f-display); font-size: 18px; font-weight: 600; }
+.el-head { padding: 16px; display: grid; gap: 6px; border-bottom: 1px solid var(--line); }
+.el-class { font-family: var(--f-mono); font-size: 12px; font-weight: 500; color: var(--accent); letter-spacing: 0.02em; }
+.el-name { margin: 0; font-family: var(--f-display); font-size: 22px; font-weight: 600; line-height: 1.2; text-wrap: balance; overflow-wrap: anywhere; }
+.el-storey { font-size: 13px; color: var(--muted); }
+.guid { margin-top: 6px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; text-align: left;
+  min-height: 44px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--ground); cursor: pointer; }
+.guid-k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.guid-v { font-family: var(--f-mono); font-size: 12.5px; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+.guid-a { font-size: 12px; color: var(--accent); font-weight: 600; }
+.pset { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+.pset-title { position: sticky; top: 0; background: var(--panel); display: flex; justify-content: space-between; gap: 8px; z-index: 1; text-transform: none; letter-spacing: 0.01em; font-size: 13px; color: var(--ink); padding-top: 14px; }
+.pset-tag { font-size: 11px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.kv { display: grid; grid-template-columns: minmax(0, 44%) minmax(0, 1fr); gap: 0; margin: 0; padding: 0 16px; font-size: 13.5px; }
+.kv dt, .kv dd { padding: 6px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+.kv dt:first-of-type, .kv dt:first-of-type + dd { border-top: 0; }
+.kv dt { color: var(--muted); padding-right: 12px; }
+.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
+.kv dd.empty { color: var(--muted); }
+
+/* overlays */
+.loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 70%, transparent); z-index: 5; }
+.loading-card { display: grid; justify-items: center; gap: 10px; padding: 24px 28px; border-radius: 16px; background: var(--panel); border: 1px solid var(--line); max-width: 80%; text-align: center; }
+.spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--accent); animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+#loading-title { font-weight: 600; overflow-wrap: anywhere; }
+#loading-step { font-size: 13px; color: var(--muted); }
+.toast { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; max-width: calc(100% - 24px); box-sizing: border-box;
+  padding: 10px 16px; border-radius: 12px; background: var(--ink); color: var(--panel); font-size: 14px; text-align: center; }
+.toast.is-error { background: var(--error); color: #fff; }
+.drop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 22%, transparent);
+  font-family: var(--f-display); font-size: 26px; font-weight: 600; color: var(--ink); border: 3px dashed var(--accent); }
+
+@media (max-width: 719px) {
+  :root { --panel-w: 100%; }
+  .main, #app:not(.sheet-open) .main { grid-template-columns: minmax(0, 1fr); }
+  .panel, #app:not(.sheet-open) .panel { display: flex; position: absolute; left: 0; right: 0; bottom: 0; height: 58%; z-index: 8;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18); transition: transform 0.25s ease; }
+  #app:not(.sheet-open) .panel { transform: translateY(calc(100% + 24px)); visibility: hidden; }
+  .brand-name { font-size: 18px; }
+  .file { display: none; }
+  .open-label { display: none; }
+  .btn.primary { padding: 0 12px; }
+}
+@media (min-width: 720px) { .file { display: block; } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } .panel { transition: none !important; } }
+</style>
+
+<div id="app" class="sheet-open">
+  <header class="bar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 3 28 10v12L16 29 4 22V10Z" fill="var(--accent)"/>
+        <path d="M16 3 28 10 16 17 4 10Z" fill="var(--ink)" opacity=".18"/>
+        <path d="M16 17v12" stroke="var(--panel)" stroke-width="1.6"/>
+        <path d="M4 10l12 7 12-7" fill="none" stroke="var(--panel)" stroke-width="1.6"/>
+      </svg>
+      <span class="brand-name">IFC Náhled</span>
+    </div>
+    <span class="file" id="file-name"></span>
+    <button class="btn icon" id="btn-sheet" type="button" aria-expanded="true" aria-label="Panel modelu a vlastností">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>
+    </button>
+    <label class="btn primary" for="file-input">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+      <span class="open-label">Otevřít IFC</span>
+    </label>
+    <input class="sr-only" id="file-input" type="file">
+  </header>
+
+  <div class="main">
+    <section class="stage" aria-label="3D model">
+      <div id="viewport"></div>
+
+      <div class="badge" id="sample-badge" hidden><b>Ukázka</b> Malý dvoupodlažní pavilon. Vlastní soubor otevřete vpravo nahoře.</div>
+      <div class="empty" id="empty-hint" hidden>
+        <strong>Otevřete IFC soubor</strong>
+        <span>Ze složky Soubory, iCloudu nebo OneDrivu. Model se zpracuje přímo v zařízení.</span>
+      </div>
+
+      <div class="clip-pop" id="clip-pop" hidden>
+        <div class="clip-head"><strong>Vodorovný řez</strong><span id="clip-value"></span></div>
+        <input id="clip-range" type="range" min="0" max="10" step="0.01" value="10" aria-label="Výška řezu">
+        <div class="chips"><span class="chips-label">Půdorys podlaží:</span><span class="chips" id="clip-chips"></span></div>
+      </div>
+
+      <nav class="toolbar" aria-label="Nástroje">
+        <button class="tool" id="btn-fit" type="button"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Celý</span></button>
+        <button class="tool" id="btn-iso" type="button"><svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg><span>3D</span></button>
+        <button class="tool" id="btn-top" type="button"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 12h9v8M13 4v4"/></svg><span>Shora</span></button>
+        <i class="sep"></i>
+        <button class="tool" id="btn-clip" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M6 12V6l6-3 6 3v6" opacity=".45"/><path d="M6 15v3l6 3 6-3v-3"/></svg><span>Řez</span></button>
+        <button class="tool" id="btn-edges" type="button" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5Z"/><path d="M5 5l4 4h10M9 9v10"/></svg><span>Hrany</span></button>
+        <i class="sep"></i>
+        <button class="tool" id="btn-focus" type="button" disabled><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span>Zaměřit</span></button>
+        <button class="tool" id="btn-hide" type="button" disabled><svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"/></svg><span>Skrýt</span></button>
+        <button class="tool" id="btn-isolate" type="button" disabled><svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M3 7V3h4M21 7V3h-4M3 17v4h4M21 17v4h-4"/></svg><span>Izolovat</span></button>
+        <button class="tool" id="btn-showall" type="button" disabled><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><span>Vše</span></button>
+      </nav>
+
+      <div class="toast" id="toast" role="status" hidden></div>
+      <div class="loading" id="loading">
+        <div class="loading-card"><div class="spinner"></div><div id="loading-title">Spouštím prohlížeč</div><div id="loading-step">Načítám jádro web-ifc…</div></div>
+      </div>
+    </section>
+
+    <aside class="panel" aria-label="Model a vlastnosti">
+      <div class="tabs" role="tablist">
+        <button class="tab" type="button" role="tab" data-tab="model" aria-selected="true">Model</button>
+        <button class="tab" type="button" role="tab" data-tab="props" aria-selected="false">Vlastnosti</button>
+      </div>
+      <div class="panel-body" id="panel-model"></div>
+      <div class="panel-body" id="panel-props" hidden></div>
+    </aside>
+  </div>
+  <div class="drop" id="drop" hidden>Pusťte IFC soubor sem</div>
+</div>
+<script src="app.js"></script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e)));
+}
+</script>
+
+</body>
+</html>
