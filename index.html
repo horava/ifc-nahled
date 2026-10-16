@@ -155,6 +155,20 @@ button { font: inherit; color: inherit; }
 .m-sub { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .sbtn { flex: none; min-height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; font-size: 13px; font-weight: 500; }
 .sbtn.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+/* floor plan inset */
+.plan { position: absolute; top: 12px; right: max(12px, env(safe-area-inset-right, 0px)); width: min(300px, calc(100% - 24px)); z-index: 4; padding: 6px; display: grid; gap: 6px; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12); }
+.plan-head { display: flex; align-items: center; gap: 6px; padding-left: 6px; }
+.plan-title { font-family: var(--f-display); font-weight: 600; font-size: 15px; }
+.plan-label { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#plan-storey { font: inherit; font-size: 13px; max-width: 120px; min-height: 32px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 0 6px; }
+.plan-view { position: relative; aspect-ratio: 4 / 3; max-width: 100%; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+#plan-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: manipulation; }
+#plan-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.pm-cone { fill: color-mix(in srgb, var(--sel) 30%, transparent); stroke: var(--sel); stroke-width: 1.5; }
+.pm-dot { fill: var(--sel); stroke: var(--panel); stroke-width: 2.5; }
+.plan-north { position: absolute; top: 6px; left: 8px; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--glass); padding: 1px 5px; border-radius: 4px; pointer-events: none; }
+.plan-hint { margin: 0; padding: 0 6px 2px; font-size: 11px; color: var(--muted); }
+@media (max-width: 719px) { .plan { width: min(220px, calc(100% - 24px)); } .plan-hint { display: none; } }
 /* orbit pivot marker */
 .pivot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 2px solid var(--sel);
   background: color-mix(in srgb, var(--sel) 25%, transparent); box-shadow: 0 0 0 2px var(--panel); pointer-events: none; z-index: 2; }
@@ -357,6 +371,20 @@ button { font: inherit; color: inherit; }
 
       <div class="overlay" id="overlay"></div>
       <div class="pivot" id="pivot" hidden aria-hidden="true"></div>
+      <section class="plan card" id="plan" hidden aria-label="Náhled půdorysu">
+        <div class="plan-head">
+          <span class="plan-title">Půdorys</span>
+          <span class="plan-label" id="plan-label"></span>
+          <select id="plan-storey" aria-label="Podlaží v náhledu"></select>
+          <button class="ib" id="plan-close" type="button" aria-label="Zavřít náhled půdorysu"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div class="plan-view">
+          <canvas id="plan-canvas"></canvas>
+          <svg id="plan-svg" aria-hidden="true"></svg>
+          <span class="plan-north" aria-hidden="true">S ↑</span>
+        </div>
+        <p class="plan-hint">Klepnutím se přesunete na místo ve výšce očí.</p>
+      </section>
 
       <div class="dock">
         <div class="card measure-bar" id="measure-bar" hidden>
@@ -414,6 +442,7 @@ button { font: inherit; color: inherit; }
         <button class="tool" id="btn-clip" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M6 12V6l6-3 6 3v6" opacity=".45"/><path d="M6 15v3l6 3 6-3v-3"/></svg><span>Řez</span></button>
         <button class="tool" id="btn-edges" type="button" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5Z"/><path d="M5 5l4 4h10M9 9v10"/></svg><span>Hrany</span></button>
         <button class="tool" id="btn-measure" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 17 17 3l4 4L7 21Z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg><span>Měřit</span></button>
+        <button class="tool" id="btn-plan" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="1"/><path d="M3.5 11h8V3.5M11.5 15v5.5M15 11h5.5"/></svg><span>Půdorys</span></button>
         <i class="sep"></i>
         <button class="tool" id="btn-focus" type="button" disabled><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span>Zaměřit</span></button>
         <button class="tool" id="btn-hide" type="button" disabled><svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"/></svg><span>Skrýt</span></button>

@@ -50,6 +50,8 @@ const S = {
   measure: { on: false, first: null, list: [] },
 };
 
+const plan = { on: false, storey: 'auto', shown: null, rt: null, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10000), bounds: null, dirty: true, timer: 0 };
+
 /* ---------- three setup ---------- */
 const viewport = $('#viewport');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -66,7 +68,7 @@ controls.dampingFactor = 0.12;
 controls.screenSpacePanning = true;
 controls.touches = { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
 controls.enableRotate = false; // otáčení řešíme sami kolem zvoleného středu (viz orbitBy)
-controls.zoomToCursor = true;  // zoom (kolečko i pinch) míří k bodu pod kurzorem / prsty
+controls.enableZoom = false;   // zoom řešíme sami (zoomAt), OrbitControls se u cíle zasekává
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0x8a8f8c, 1.6));
 const sun = new THREE.DirectionalLight(0xffffff, 1.5);
@@ -89,6 +91,7 @@ const requestRender = () => { needsRender = true; };
 controls.addEventListener('change', requestRender);
 
 function applyTheme() {
+  if (typeof markPlanDirty === 'function') try { markPlanDirty(); } catch (e) { /* not ready */ }
   scene.background = new THREE.Color(cssVar('--ground') || '#e6e9e7');
   edgeMat.color.set(cssVar('--edge') || '#17201e');
   selMat.color.set(cssVar('--sel') || '#ff7a1a');
@@ -121,42 +124,46 @@ function renderFrame() {
   renderer.clearDepth();
   renderer.render(measureScene, camera);
   updateOverlay();
+  if (plan.on) updatePlanMarker();
   needsRender = false;
 }
-/* ----- zoom bez zaseknutí ----- */
-// OrbitControls se ke svému cíli blíží po procentech, takže těsně před ním zoom
-// skoro stojí. Během zoomu proto cíl držíme aspoň walkDist před kamerou
-// (kamera pak plynule pokračuje dál) a na začátku gesta ho posadíme do hloubky
-// povrchu pod prsty, aby se zoom zpomaloval až u něj.
-let zoomUntil = 0;
-let lastWheel = 0;
-const _vd = new THREE.Vector3();
-function pushThrough() {
-  const T = S.walkDist || 1.5;
-  camera.getWorldDirection(_vd);
-  if (camera.position.distanceTo(controls.target) < T) {
-    controls.target.copy(camera.position).addScaledVector(_vd, T);
+/* ----- zoom: posun kamery po paprsku pod prsty / kurzorem ----- */
+// Krok = část vzdálenosti k povrchu pod prsty, ale nikdy méně než minStep.
+// U povrchu tedy zpomalí, ale nezasekne se a projde dál (skrz řez, do místnosti).
+let lastZoomD = null;
+function zoomAt(cx, cy, amount) {
+  if (!amount) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const dir = ray.ray.direction.clone();
+  let D = null;
+  if (S.modelID != null) {
+    const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false);
+    const hit = hits.find((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
+    if (hit) D = hit.distance;
   }
-}
-function zoomDepthAt(cx, cy) {
-  if (typeof hitAt !== 'function' || S.modelID == null) return;
-  const hit = hitAt(cx, cy);
-  if (!hit) return;
-  camera.getWorldDirection(_vd);
-  const depth = hit.point.clone().sub(camera.position).dot(_vd);
-  if (depth > 0.05) controls.target.copy(camera.position).addScaledVector(_vd, depth);
+  if (D == null) D = lastZoomD ?? camera.position.distanceTo(controls.target);
+  lastZoomD = D;
+  const minStep = S.minStep || 0.5;
+  const move = amount * Math.max(D, minStep);
+  tweenId++;
+  camera.position.addScaledVector(dir, move);
+  camera.updateMatrixWorld();
+  const vd = camera.getWorldDirection(new THREE.Vector3());
+  controls.target.copy(camera.position).addScaledVector(vd, Math.max(D - move, minStep));
+  controls.update();
+  requestRender();
 }
 renderer.domElement.addEventListener('wheel', (e) => {
-  const now = performance.now();
-  if (now - lastWheel > 300) zoomDepthAt(e.clientX, e.clientY);
-  lastWheel = now;
-  zoomUntil = now + 300;
-}, { passive: true });
+  e.preventDefault();
+  const unit = e.deltaMode === 1 ? 0.05 : e.deltaMode === 2 ? 0.5 : 0.0015;
+  zoomAt(e.clientX, e.clientY, THREE.MathUtils.clamp(-e.deltaY * unit, -0.4, 0.4));
+}, { passive: false });
 
 (function loop() {
   requestAnimationFrame(loop);
   const moved = controls.update();
-  if (performance.now() < zoomUntil) pushThrough();
   if (moved || needsRender) renderFrame();
 })();
 
@@ -308,7 +315,8 @@ async function loadIfc(buffer, fileName) {
     S.bbox = boxOf(S.meshes.filter((m) => m.visible));
     if (S.bbox.isEmpty()) S.bbox.setFromObject(modelGroup);
     S.baseAngle = detectOrientation();
-    S.walkDist = THREE.MathUtils.clamp(S.bbox.getSize(new THREE.Vector3()).length() * 0.15, 1.5, 20);
+    S.minStep = THREE.MathUtils.clamp(S.bbox.getSize(new THREE.Vector3()).length() * 0.03, 0.5, 5);
+    lastZoomD = null;
     setupClip();
     fitView('iso', false);
 
@@ -330,6 +338,8 @@ async function loadIfc(buffer, fileName) {
     renderModelPanel();
     renderProps();
     if (!$('#panel-tree').hidden) renderTree();
+    plan.storey = 'auto'; plan.shown = null;
+    if (plan.on) { fillPlanSelect(); markPlanDirty(); }
     $('#file-name').textContent = fileName;
     $('#file-name').title = fileName;
     $('#empty-hint').hidden = true;
@@ -371,6 +381,7 @@ function applyVisibility() {
   updateToolbar();
   requestRender();
   if (S.tree && !$('#panel-tree').hidden) renderTree();
+  markPlanDirty();
 }
 
 /* ---------- selection ---------- */
@@ -404,6 +415,7 @@ const ray = new THREE.Raycaster();
 const ptr = new THREE.Vector2();
 let down = null;
 let lastTap = null;
+let pinchPrev = null;
 const pointers = new Map();
 let orbit = null;
 try { S.orbitSel = localStorage.getItem('ifc-nahled-orbit-sel') !== '0'; } catch (e) { S.orbitSel = true; }
@@ -464,11 +476,7 @@ function setOrbitSel(on) {
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size === 2) {
-    const [a, b] = [...pointers.values()];
-    zoomDepthAt((a.x + b.x) / 2, (a.y + b.y) / 2);
-    zoomUntil = performance.now() + 300;
-  }
+  pinchPrev = null;
   const single = pointers.size === 1 && (e.pointerType !== 'mouse' || e.button === 0);
   down = single ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
   orbit = single ? { x: e.clientX, y: e.clientY, P: null, moved: false } : null;
@@ -476,7 +484,13 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (!pointers.has(e.pointerId)) return;
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  if (pointers.size === 2) zoomUntil = performance.now() + 300;
+  if (pointers.size === 2) {
+    const [a, b] = [...pointers.values()];
+    const d = Math.hypot(a.x - b.x, a.y - b.y);
+    if (pinchPrev && d > 10) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, THREE.MathUtils.clamp(1 - pinchPrev / d, -0.5, 0.5));
+    pinchPrev = d;
+    return;
+  }
   if (!orbit || pointers.size !== 1) return;
   const dx = e.clientX - orbit.x, dy = e.clientY - orbit.y;
   if (!orbit.moved && Math.hypot(dx, dy) < 6) return;
@@ -488,6 +502,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 });
 const endPointer = (e) => {
   pointers.delete(e.pointerId);
+  pinchPrev = null;
   if (orbit?.moved) showPivot(orbit.P, false);
   orbit = null;
   if (!down || e.type === 'pointercancel') { down = null; return; }
@@ -1191,6 +1206,143 @@ async function copy(text, btn) {
   }
   setTimeout(() => { lab.textContent = 'Kopírovat'; }, 1600);
 }
+
+/* ---------- náhled půdorysu ---------- */
+const planBox = $('#plan');
+const planCanvas = $('#plan-canvas');
+const planSvg = $('#plan-svg');
+const planSel = $('#plan-storey');
+const planCutPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
+function storeyFloors() {
+  return S.storeys.filter((s) => s.id !== -1).map((s) => {
+    const cut = storeyCutHeight(s);
+    return cut == null ? null : { st: s, floor: cut - 1.2, cut };
+  }).filter(Boolean).sort((a, b) => a.floor - b.floor);
+}
+function planStorey() {
+  const fl = storeyFloors();
+  if (!fl.length) return null;
+  if (plan.storey !== 'auto') return fl.find((f) => String(f.st.id) === plan.storey) || fl[0];
+  const y = camera.position.y;
+  let pick = fl[0];
+  for (const f of fl) if (f.floor <= y + 0.3) pick = f;
+  return pick;
+}
+function fillPlanSelect() {
+  planSel.replaceChildren();
+  const o = el('option', null, 'Podle kamery'); o.value = 'auto'; planSel.appendChild(o);
+  storeyFloors().slice().reverse().forEach((f) => { const op = el('option', null, f.st.name); op.value = String(f.st.id); planSel.appendChild(op); });
+  planSel.value = plan.storey;
+  if (planSel.value !== plan.storey) { plan.storey = 'auto'; planSel.value = 'auto'; }
+}
+planSel.addEventListener('change', () => { plan.storey = planSel.value; plan.dirty = true; updatePlan(); });
+function markPlanDirty() { plan.dirty = true; if (plan.on) { clearTimeout(plan.timer); plan.timer = setTimeout(updatePlan, 120); } }
+
+function renderPlanImage(f) {
+  const w = planCanvas.clientWidth, h = planCanvas.clientHeight;
+  if (!w || !h || S.bbox.isEmpty()) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = Math.round(w * dpr), H = Math.round(h * dpr);
+  if (!plan.rt || plan.rt.width !== W || plan.rt.height !== H) {
+    plan.rt?.dispose();
+    plan.rt = new THREE.WebGLRenderTarget(W, H, { samples: 4 });
+    plan.rt.texture.colorSpace = THREE.SRGBColorSpace;
+  }
+  // ortho kamera shora, sever (+Y v IFC = −Z ve scéně) nahoře
+  const b = S.bbox, pad = 0.04 * Math.max(b.max.x - b.min.x, b.max.z - b.min.z);
+  let x0 = b.min.x - pad, x1 = b.max.x + pad, z0 = b.min.z - pad, z1 = b.max.z + pad;
+  const aspect = W / H, bw = x1 - x0, bh = z1 - z0;
+  if (bw / bh > aspect) { const nh = bw / aspect; z0 -= (nh - bh) / 2; z1 += (nh - bh) / 2; } else { const nw = bh * aspect; x0 -= (nw - bw) / 2; x1 += (nw - bw) / 2; }
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  const oc = plan.cam;
+  oc.left = -(x1 - x0) / 2; oc.right = (x1 - x0) / 2; oc.top = (z1 - z0) / 2; oc.bottom = -(z1 - z0) / 2;
+  oc.position.set(cx, b.max.y + 50, cz);
+  oc.up.set(0, 0, -1);
+  oc.lookAt(cx, b.min.y - 10, cz);
+  oc.near = 1; oc.far = b.max.y - b.min.y + 100;
+  oc.updateProjectionMatrix(); oc.updateMatrixWorld();
+  plan.bounds = { x0, x1, z0, z1 };
+  planCutPlane.constant = f.cut;
+  // render: jen řez půdorysu (uživatelův svislý řez ignorujeme), bez výběru a měření
+  const prevBg = scene.background;
+  scene.background = new THREE.Color(cssVar('--panel') || '#f8faf9');
+  const selRec = S.selected != null ? S.elements.get(S.selected) : null;
+  if (selRec) selRec.meshes.forEach((m) => { if (m.userData.mat) m.material = m.userData.mat; });
+  renderer.setRenderTarget(plan.rt);
+  renderer.clippingPlanes = [planCutPlane];
+  renderer.clear();
+  renderer.render(scene, oc);
+  renderer.setRenderTarget(null);
+  renderer.clippingPlanes = [];
+  if (selRec) selRec.meshes.forEach((m) => { m.material = selMat; });
+  scene.background = prevBg;
+  const px = new Uint8Array(W * H * 4);
+  renderer.readRenderTargetPixels(plan.rt, 0, 0, W, H, px);
+  planCanvas.width = W; planCanvas.height = H;
+  const ctx = planCanvas.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  for (let y = 0; y < H; y++) img.data.set(px.subarray((H - 1 - y) * W * 4, (H - y) * W * 4), y * W * 4);
+  ctx.putImageData(img, 0, 0);
+  requestRender();
+}
+function updatePlan() {
+  if (!plan.on || S.modelID == null) return;
+  const f = planStorey();
+  if (!f) { $('#plan-label').textContent = 'Model nemá podlaží'; return; }
+  $('#plan-label').textContent = f.st.name;
+  if (plan.dirty || plan.shown !== f.st.id) {
+    plan.shown = f.st.id; plan.dirty = false;
+    renderPlanImage(f);
+  }
+  updatePlanMarker();
+}
+function planXY(x, z) {
+  const B = plan.bounds, w = planCanvas.clientWidth, h = planCanvas.clientHeight;
+  return { x: (x - B.x0) / (B.x1 - B.x0) * w, y: (z - B.z0) / (B.z1 - B.z0) * h };
+}
+function updatePlanMarker() {
+  if (!plan.on || !plan.bounds) return;
+  if (plan.storey === 'auto') { const f = planStorey(); if (f && f.st.id !== plan.shown) { updatePlan(); return; } }
+  const p = planXY(camera.position.x, camera.position.z);
+  const d = camera.getWorldDirection(new THREE.Vector3());
+  const yaw = Math.atan2(d.z, d.x);
+  const hf = Math.atan(Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * camera.aspect);
+  const L = 34;
+  const a1 = { x: p.x + Math.cos(yaw - hf) * L, y: p.y + Math.sin(yaw - hf) * L };
+  const a2 = { x: p.x + Math.cos(yaw + hf) * L, y: p.y + Math.sin(yaw + hf) * L };
+  const w = planCanvas.clientWidth, h = planCanvas.clientHeight;
+  const inside = p.x >= 0 && p.y >= 0 && p.x <= w && p.y <= h;
+  planSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+  planSvg.innerHTML = inside
+    ? `<path d="M${p.x},${p.y} L${a1.x},${a1.y} A${L},${L} 0 0 1 ${a2.x},${a2.y} Z" class="pm-cone"/><circle cx="${p.x}" cy="${p.y}" r="6" class="pm-dot"/>`
+    : '';
+}
+function togglePlan(force) {
+  plan.on = force ?? !plan.on;
+  planBox.hidden = !plan.on;
+  $('#btn-plan').setAttribute('aria-pressed', String(plan.on));
+  if (plan.on) { fillPlanSelect(); plan.dirty = true; requestAnimationFrame(updatePlan); }
+}
+$('#btn-plan').addEventListener('click', () => togglePlan());
+$('#plan-close').addEventListener('click', () => togglePlan(false));
+/* klepnutí do půdorysu: kamera se přesune na místo ve výšce očí (1,6 m nad podlahou), směr pohledu zůstane */
+planCanvas.addEventListener('click', (e) => {
+  if (!plan.bounds) return;
+  const r = planCanvas.getBoundingClientRect();
+  const B = plan.bounds;
+  const x = B.x0 + (e.clientX - r.left) / r.width * (B.x1 - B.x0);
+  const z = B.z0 + (e.clientY - r.top) / r.height * (B.z1 - B.z0);
+  const f = planStorey();
+  const eye = f ? f.floor + 1.6 : camera.position.y;
+  const d = camera.getWorldDirection(new THREE.Vector3());
+  d.y = 0;
+  if (d.lengthSq() < 1e-4) d.set(0, 0, -1);
+  d.normalize();
+  if (plan.storey === 'auto' && f) plan.storey = String(f.st.id), planSel.value = plan.storey;
+  const pos = new THREE.Vector3(x, eye, z);
+  tween(pos, pos.clone().addScaledVector(d, S.minStep * 4), true);
+});
+new ResizeObserver(() => markPlanDirty()).observe(planCanvas);
 
 /* ---------- IFC tree ---------- */
 const SPATIAL = new Set(['IFCPROJECT', 'IFCSITE', 'IFCBUILDING', 'IFCBUILDINGSTOREY', 'IFCSPACE', 'IFCFACILITY', 'IFCFACILITYPART', 'IFCBRIDGE', 'IFCROAD', 'IFCRAILWAY']);
