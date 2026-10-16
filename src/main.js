@@ -80,6 +80,7 @@ renderer.autoClear = false;
 const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
 const edgeMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.5 });
 const selMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.92 });
+const spaceMat = new THREE.MeshLambertMaterial({ side: THREE.DoubleSide, transparent: true, opacity: 0.22, depthWrite: false });
 
 let needsRender = true;
 const requestRender = () => { needsRender = true; };
@@ -89,6 +90,7 @@ function applyTheme() {
   scene.background = new THREE.Color(cssVar('--ground') || '#e6e9e7');
   edgeMat.color.set(cssVar('--edge') || '#17201e');
   selMat.color.set(cssVar('--sel') || '#ff7a1a');
+  spaceMat.color.set(cssVar('--space') || '#3b82c4');
   measureMat.color.set(cssVar('--sel') || '#ff7a1a');
   clipOutlineMat.color.set(cssVar('--accent') || '#c94a10');
   requestRender();
@@ -176,7 +178,7 @@ async function loadIfc(buffer, fileName) {
     const geoCache = new Map();
     const edgeCache = new Map();
     const withEdges = [];
-    api.StreamAllMeshes(modelID, (flat) => {
+    const onMesh = (flat) => {
       const id = flat.expressID;
       let rec = S.elements.get(id);
       if (!rec) { rec = { meshes: [], cls: '', storey: null }; S.elements.set(id, rec); }
@@ -209,7 +211,10 @@ async function loadIfc(buffer, fileName) {
         S.meshes.push(mesh);
         withEdges.push(mesh);
       }
-    });
+    };
+    api.StreamAllMeshes(modelID, onMesh);
+    // web-ifc vynechává IfcSpace, místnosti načteme zvlášť
+    try { api.StreamAllMeshesWithTypes(modelID, [WebIFC.IFCSPACE], onMesh); } catch (e) { console.warn('IfcSpace', e); }
 
     // classes
     for (const [id, rec] of S.elements) {
@@ -218,6 +223,7 @@ async function loadIfc(buffer, fileName) {
       rec.cls = cls;
       if (!S.classes.has(cls)) S.classes.set(cls, { visible: !HIDDEN_BY_DEFAULT.has(U(cls)), count: 0 });
       S.classes.get(cls).count++;
+      if (U(cls) === 'IFCSPACE') for (const m of rec.meshes) { m.material = spaceMat; m.renderOrder = 2; }
     }
 
     // spatial structure
@@ -240,7 +246,9 @@ async function loadIfc(buffer, fileName) {
         (node.children || []).forEach((c) => walk(c, sid));
       };
       walk(tree, null);
-    } catch (e) { console.warn('Spatial structure', e); }
+      S.tree = tree;
+    } catch (e) { console.warn('Spatial structure', e); S.tree = null; }
+    S.treeOpen = new Set(); S.treeLimit = new Map(); S.names = new Map();
     S.storeys = [...storeyMap.values()].sort((a, b) => a.elev - b.elev);
     let orphan = 0;
     for (const rec of S.elements.values()) {
@@ -252,6 +260,7 @@ async function loadIfc(buffer, fileName) {
     // edges (skip for very heavy models)
     if (withEdges.length < 6000) {
       for (const mesh of withEdges) {
+        if (U(S.elements.get(mesh.userData.id)?.cls) === 'IFCSPACE') continue;
         let eg = edgeCache.get(mesh.userData.geoId);
         if (!eg) { eg = new THREE.EdgesGeometry(mesh.geometry, 30); edgeCache.set(mesh.userData.geoId, eg); }
         const ls = new THREE.LineSegments(eg, edgeMat);
@@ -265,6 +274,7 @@ async function loadIfc(buffer, fileName) {
     applyVisibility();
     S.bbox = boxOf(S.meshes.filter((m) => m.visible));
     if (S.bbox.isEmpty()) S.bbox.setFromObject(modelGroup);
+    S.baseAngle = detectOrientation();
     setupClip();
     fitView('iso', false);
 
@@ -285,6 +295,7 @@ async function loadIfc(buffer, fileName) {
 
     renderModelPanel();
     renderProps();
+    if (!$('#panel-tree').hidden) renderTree();
     $('#file-name').textContent = fileName;
     $('#file-name').title = fileName;
     $('#empty-hint').hidden = true;
@@ -325,6 +336,7 @@ function applyVisibility() {
   }
   updateToolbar();
   requestRender();
+  if (S.tree && !$('#panel-tree').hidden) renderTree();
 }
 
 /* ---------- selection ---------- */
@@ -336,8 +348,11 @@ function select(id, opts = {}) {
   for (const m of rec.meshes) { m.userData.mat = m.material; m.material = selMat; }
   updateToolbar();
   requestRender();
-  if (!opts.keepPanel) showPanel('props');
+  const inTree = !$('#panel-tree').hidden;
+  if (!opts.keepPanel && !inTree) showPanel('props');
   renderProps();
+  updateRotLabel();
+  if (!$('#panel-tree').hidden) renderTree(true);
 }
 function deselect(render = true) {
   if (S.selected != null) {
@@ -345,7 +360,10 @@ function deselect(render = true) {
     if (rec) for (const m of rec.meshes) { if (m.userData.mat) m.material = m.userData.mat; }
   }
   S.selected = null;
-  if (render) { updateToolbar(); renderProps(); requestRender(); }
+  if (render) {
+    updateToolbar(); renderProps(); requestRender(); updateRotLabel();
+    if (!$('#panel-tree').hidden) renderTree();
+  }
 }
 
 const ray = new THREE.Raycaster();
@@ -437,37 +455,97 @@ const CLIP_MODES = {
   cross: { label: 'Příčný', sub: 'od kraje modelu' },
   long: { label: 'Podélný', sub: 'od kraje modelu' },
 };
-const clip = { mode: 'h', vals: {}, flip: { h: false, cross: false, long: false } };
+const clip = { mode: 'h', vals: {}, flip: { h: false, cross: false, long: false }, rot: { cross: 0, long: 0 } };
 let clipOutline = null;
-const AX = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
-function clipAxisKey(mode = clip.mode) {
-  if (mode === 'h') return 'y';
-  const sz = S.bbox.getSize(new THREE.Vector3());
-  const longKey = sz.x >= sz.z ? 'x' : 'z';
-  const shortKey = longKey === 'x' ? 'z' : 'x';
-  return mode === 'cross' ? longKey : shortKey; // příčný řez je kolmý na delší osu
+const UP = new THREE.Vector3(0, 1, 0);
+const nfDeg = new Intl.NumberFormat('cs-CZ', { maximumFractionDigits: 1 });
+const hdir = (deg) => { const r = THREE.MathUtils.degToRad(deg); return new THREE.Vector3(Math.cos(r), 0, Math.sin(r)); };
+const wrap180 = (d) => ((d + 90) % 180 + 180) % 180 - 90;
+
+/* hlavní směr budovy: histogram vodorovných hran stěn (mod 90°), delší z obou os = podélná */
+function dominantAngle(meshes, maxTris = 150000) {
+  const hist = new Float32Array(180);
+  const a = new THREE.Vector3(), b = new THREE.Vector3();
+  let tris = 0;
+  for (const m of meshes) {
+    const pos = m.geometry.attributes.position, idx = m.geometry.index;
+    if (!idx) continue;
+    const step = Math.max(1, Math.floor(idx.count / 3 / 400)) * 3;
+    for (let i = 0; i + 2 < idx.count; i += step) {
+      for (let e = 0; e < 3; e++) {
+        a.fromBufferAttribute(pos, idx.getX(i + e)).applyMatrix4(m.matrixWorld);
+        b.fromBufferAttribute(pos, idx.getX(i + (e + 1) % 3)).applyMatrix4(m.matrixWorld);
+        const dx = b.x - a.x, dz = b.z - a.z, dy = Math.abs(b.y - a.y);
+        const L = Math.hypot(dx, dz);
+        if (L < 0.05 || dy > L * 0.2) continue;
+        let deg = THREE.MathUtils.radToDeg(Math.atan2(dz, dx));
+        deg = ((deg % 90) + 90) % 90;
+        hist[Math.round(deg * 2) % 180] += L;
+      }
+      if (++tris > maxTris) break;
+    }
+  }
+  let best = 0;
+  for (let i = 0; i < 180; i++) {
+    const v = hist[i] + 0.5 * (hist[(i + 179) % 180] + hist[(i + 1) % 180]);
+    const bv = hist[best] + 0.5 * (hist[(best + 179) % 180] + hist[(best + 1) % 180]);
+    if (v > bv) best = i;
+  }
+  return hist[best] > 0 ? best / 2 : null;
+}
+function extentAlong(meshes, dir) {
+  let mn = Infinity, mx = -Infinity;
+  const v = new THREE.Vector3();
+  for (const m of meshes) {
+    const pos = m.geometry.attributes.position;
+    const step = Math.max(1, Math.floor(pos.count / 200));
+    for (let i = 0; i < pos.count; i += step) {
+      const d = v.fromBufferAttribute(pos, i).applyMatrix4(m.matrixWorld).dot(dir);
+      if (d < mn) mn = d; if (d > mx) mx = d;
+    }
+  }
+  return mx - mn;
+}
+function detectOrientation() {
+  const walls = [];
+  for (const rec of S.elements.values()) if (/^IFC(WALL|CURTAINWALL)/.test(U(rec.cls))) walls.push(...rec.meshes);
+  const src = walls.length ? walls : S.meshes.filter((m) => m.visible);
+  const ang = dominantAngle(src);
+  if (ang == null) return 0;
+  // vyber z ang / ang+90 tu osu, podél které je model delší
+  return extentAlong(src, hdir(ang)) >= extentAlong(src, hdir(ang + 90)) ? ang : ang + 90;
+}
+
+function clipNormal(mode = clip.mode) {
+  if (mode === 'h') return UP.clone();
+  const base = S.baseAngle || 0;
+  return mode === 'cross' ? hdir(base + clip.rot.cross) : hdir(base + 90 + clip.rot.long);
 }
 function clipRangeFor(mode = clip.mode) {
-  const k = clipAxisKey(mode);
-  return { min: S.bbox.min[k], max: S.bbox.max[k] };
+  const n = clipNormal(mode), b = S.bbox;
+  let mn = Infinity, mx = -Infinity;
+  for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+    const d = n.x * x + n.y * y + n.z * z;
+    if (d < mn) mn = d; if (d > mx) mx = d;
+  }
+  return { min: mn, max: mx };
 }
 function setupClip() {
   if (S.bbox.isEmpty()) return;
-  clip.vals = {};
-  for (const m of Object.keys(CLIP_MODES)) {
-    const r = clipRangeFor(m);
-    clip.vals[m] = (r.min + r.max) / 2;
-  }
+  clip.rot = { cross: 0, long: 0 };
   clip.flip = { h: false, cross: false, long: false };
+  clip.vals = {};
+  const c = S.bbox.getCenter(new THREE.Vector3());
+  for (const m of Object.keys(CLIP_MODES)) clip.vals[m] = clipNormal(m).dot(c);
   renderClipChips();
   applyClipMode();
 }
 function applyClipPlane() {
-  const k = clipAxisKey();
+  const n = clipNormal();
   const v = clip.vals[clip.mode];
   const flip = clip.flip[clip.mode];
   // three.js odřízne stranu, kde je vzdálenost od roviny záporná
-  clipPlane.normal.copy(AX[k]).multiplyScalar(flip ? 1 : -1);
+  clipPlane.normal.copy(n).multiplyScalar(flip ? 1 : -1);
   clipPlane.constant = flip ? -v : v;
   updateClipOutline();
   requestRender();
@@ -477,13 +555,42 @@ function applyClipMode() {
   clipRange.min = r.min.toFixed(2);
   clipRange.max = r.max.toFixed(2);
   clipRange.step = 0.01;
+  clip.vals[clip.mode] = Math.min(r.max, Math.max(r.min, clip.vals[clip.mode]));
   clipRange.value = clip.vals[clip.mode].toFixed(2);
   document.querySelectorAll('.seg button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === clip.mode)));
   $('#clip-sub').textContent = CLIP_MODES[clip.mode].sub;
   $('#clip-chips-row').hidden = clip.mode !== 'h';
+  $('#clip-rot-row').hidden = clip.mode === 'h';
   $('#clip-mini-mode').textContent = CLIP_MODES[clip.mode].label;
+  updateRotLabel();
   updateClipLabel();
   applyClipPlane();
+}
+function updateRotLabel() {
+  if (clip.mode === 'h') return;
+  const r = clip.rot[clip.mode];
+  $('#clip-rot-value').textContent = `${r > 0 ? '+' : ''}${nfDeg.format(r)}°`;
+  $('#clip-rot-elem').disabled = S.selected == null;
+}
+/* natočení kolem bodu roviny nejbližšího středu modelu */
+function rotateClip(newRot, pivot) {
+  if (clip.mode === 'h') return;
+  const P = pivot || clipPlane.projectPoint(S.bbox.getCenter(new THREE.Vector3()), new THREE.Vector3());
+  clip.rot[clip.mode] = wrap180(newRot);
+  clip.vals[clip.mode] = clipNormal().dot(P);
+  applyClipMode();
+}
+function alignClipToSelected() {
+  const rec = S.elements.get(S.selected);
+  if (!rec || clip.mode === 'h') return;
+  const ang = dominantAngle(rec.meshes);
+  if (ang == null) { toast('U tohoto prvku se nepodařilo určit směr.', true); return; }
+  // směr prvku (ang nebo ang+90) = ten, podél kterého je prvek delší; rovina řezu kolmo na něj
+  const dirDeg = extentAlong(rec.meshes, hdir(ang)) >= extentAlong(rec.meshes, hdir(ang + 90)) ? ang : ang + 90;
+  const base = (S.baseAngle || 0) + (clip.mode === 'long' ? 90 : 0);
+  const c = boxOf(rec.meshes).getCenter(new THREE.Vector3());
+  rotateClip(dirDeg - base, c);
+  toast('Řez je kolmo na vybraný prvek a prochází jeho středem.');
 }
 function setClip(h) {
   clip.vals[clip.mode] = Number(h);
@@ -501,18 +608,22 @@ clipRange.addEventListener('input', () => setClip(clipRange.value));
 function updateClipOutline() {
   if (clipOutline) { measureScene.remove(clipOutline); clipOutline.geometry.dispose(); clipOutline = null; }
   if (!S.clipOn || !S.clipPanel || S.bbox.isEmpty()) return;
-  const k = clipAxisKey(), v = clip.vals[clip.mode];
-  const b = S.bbox, others = ['x', 'y', 'z'].filter((a) => a !== k);
+  const n = clipNormal(), v = clip.vals[clip.mode];
+  const t1 = Math.abs(n.y) > 0.9 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3().crossVectors(UP, n).normalize();
+  const t2 = new THREE.Vector3().crossVectors(n, t1).normalize();
+  const b = S.bbox;
+  let a1 = Infinity, b1 = -Infinity, a2 = Infinity, b2 = -Infinity;
+  for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+    const p = new THREE.Vector3(x, y, z);
+    const d1 = p.dot(t1), d2 = p.dot(t2);
+    a1 = Math.min(a1, d1); b1 = Math.max(b1, d1); a2 = Math.min(a2, d2); b2 = Math.max(b2, d2);
+  }
   const pad = 0.3;
-  const corners = [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]].map(([i, j]) => {
-    const p = new THREE.Vector3();
-    p[k] = v;
-    p[others[0]] = i ? b.max[others[0]] + pad : b.min[others[0]] - pad;
-    p[others[1]] = j ? b.max[others[1]] + pad : b.min[others[1]] - pad;
-    return [p.x, p.y, p.z];
-  }).flat();
+  const o = n.clone().multiplyScalar(v);
+  const pts = [[a1 - pad, a2 - pad], [b1 + pad, a2 - pad], [b1 + pad, b2 + pad], [a1 - pad, b2 + pad], [a1 - pad, a2 - pad]]
+    .map(([i, j]) => o.clone().addScaledVector(t1, i).addScaledVector(t2, j).toArray()).flat();
   const g = new LineGeometry();
-  g.setPositions(corners);
+  g.setPositions(pts);
   clipOutline = new Line2(g, clipOutlineMat);
   clipOutline.renderOrder = 998;
   measureScene.add(clipOutline);
@@ -526,8 +637,8 @@ function storeyCutHeight(st) {
   return boxOf(meshes).min.y + 1.2;
 }
 function renderClipChips() {
-  const wrap = $('#clip-chips');
-  wrap.replaceChildren();
+  const wrapEl = $('#clip-chips');
+  wrapEl.replaceChildren();
   S.storeys.filter((s) => s.id !== -1).forEach((st) => {
     const b = el('button', 'chip', st.name);
     b.type = 'button';
@@ -538,7 +649,7 @@ function renderClipChips() {
       setClip(h.toFixed(2));
       fitView('top');
     });
-    wrap.appendChild(b);
+    wrapEl.appendChild(b);
   });
 }
 function viewSection() {
@@ -572,6 +683,12 @@ $('#clip-mini').addEventListener('click', () => { S.clipPanel = true; updateClip
 $('#clip-off').addEventListener('click', () => toggleClip(false));
 $('#clip-up').addEventListener('click', () => nudgeClip(0.1));
 $('#clip-down').addEventListener('click', () => nudgeClip(-0.1));
+document.querySelectorAll('[data-rot]').forEach((b) => b.addEventListener('click', () => {
+  if (clip.mode === 'h') return;
+  const d = b.dataset.rot;
+  rotateClip(d === '0' ? 0 : clip.rot[clip.mode] + Number(d));
+}));
+$('#clip-rot-elem').addEventListener('click', alignClipToSelected);
 
 /* ---------- measurement ---------- */
 const overlay = $('#overlay');
@@ -751,6 +868,15 @@ function renderModelPanel() {
   fact('Prvků s geometrií', S.elements.size.toLocaleString('cs-CZ'));
   fact('Podlaží', String(S.storeys.filter((s) => s.id !== -1).length));
   summary.append(proj, facts);
+  const spaceCls = [...S.classes.entries()].find(([k]) => U(k) === 'IFCSPACE');
+  if (spaceCls) {
+    const [, c] = spaceCls;
+    const sb = el('button', 'sbtn space-toggle' + (c.visible ? ' on' : ''), c.visible ? `Skrýt místnosti (${c.count})` : `Zobrazit místnosti (${c.count})`);
+    sb.type = 'button';
+    sb.setAttribute('aria-pressed', String(c.visible));
+    sb.addEventListener('click', () => { c.visible = !c.visible; S.isolated = null; applyVisibility(); renderModelPanel(); });
+    summary.appendChild(sb);
+  }
   root.appendChild(summary);
 
   if (S.isolated || S.hidden.size) {
@@ -927,6 +1053,142 @@ async function copy(text, btn) {
   setTimeout(() => { lab.textContent = 'Kopírovat'; }, 1600);
 }
 
+/* ---------- IFC tree ---------- */
+const SPATIAL = new Set(['IFCPROJECT', 'IFCSITE', 'IFCBUILDING', 'IFCBUILDINGSTOREY', 'IFCSPACE', 'IFCFACILITY', 'IFCFACILITYPART', 'IFCBRIDGE', 'IFCROAD', 'IFCRAILWAY']);
+const TREE_PAGE = 200;
+function nodeName(id) {
+  if (S.names.has(id)) return S.names.get(id);
+  let n = '';
+  try {
+    const l = S.api.GetLine(S.modelID, id);
+    const name = l?.Name?.value || '', ln = l?.LongName?.value || '';
+    n = name && ln && ln !== name ? `${name} – ${ln}` : (name || ln);
+  } catch (e) { /* ignore */ }
+  S.names.set(id, n);
+  return n;
+}
+function typeOfNode(node) { return S.elements.get(node.expressID)?.cls || node.type || ''; }
+function prettyCls(t) {
+  const u = U(t);
+  if (u.startsWith('IFC') && t === u) return 'Ifc' + u.slice(3).toLowerCase().replace(/^./, (c) => c.toUpperCase());
+  return t;
+}
+/* descendant element ids with geometry (memoized per node object) */
+const descCache = new WeakMap();
+function descIds(node) {
+  if (descCache.has(node)) return descCache.get(node);
+  const out = [];
+  if (S.elements.has(node.expressID)) out.push(node.expressID);
+  for (const c of node.children || []) out.push(...descIds(c));
+  descCache.set(node, out);
+  return out;
+}
+/* children shown in the tree: spatial children first; many elements grouped by class */
+function treeChildren(node) {
+  const kids = node.children || [];
+  const spatial = kids.filter((k) => SPATIAL.has(U(k.type)));
+  const elems = kids.filter((k) => !SPATIAL.has(U(k.type)));
+  if (elems.length <= 12) return [...spatial, ...elems];
+  const groups = new Map();
+  for (const e of elems) {
+    const c = typeOfNode(e);
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c).push(e);
+  }
+  const g = [...groups.entries()].sort((a, b) => classLabel(a[0]).localeCompare(classLabel(b[0]), 'cs'))
+    .map(([cls, children]) => ({ group: true, key: `${node.expressID}:${cls}`, cls, children }));
+  return [...spatial, ...g];
+}
+const nodeKey = (n) => (n.group ? n.key : String(n.expressID));
+function findPath(node, id, path = []) {
+  if (node.expressID === id) return [...path, node];
+  for (const c of treeChildren(node)) {
+    const r = findPath(c, id, [...path, node]);
+    if (r) return r;
+  }
+  return null;
+}
+function setHiddenFor(ids, hide) {
+  for (const id of ids) { if (hide) S.hidden.add(id); else S.hidden.delete(id); }
+  if (S.isolated) S.isolated = null;
+  applyVisibility();
+}
+function renderTree(reveal = false) {
+  const root = $('#panel-tree');
+  if (S.modelID == null || !S.tree) { root.replaceChildren(el('p', 'muted pad', 'Strom modelu není k dispozici.')); return; }
+  if (reveal && S.selected != null) {
+    const path = findPath(S.tree, S.selected);
+    if (path) path.slice(0, -1).forEach((n) => S.treeOpen.add(nodeKey(n)));
+  }
+  const scroll = root.scrollTop;
+  root.replaceChildren();
+  const ul = el('ul', 'tree');
+  const add = (node, depth, parentUl) => {
+    const key = nodeKey(node);
+    const li = el('li');
+    const row = el('div', 'tnode');
+    row.style.paddingLeft = `${4 + depth * 14}px`;
+    const kids = node.group ? node.children : treeChildren(node);
+    const open = S.treeOpen.has(key);
+    const tw = el('button', 'twist' + (kids.length ? '' : ' leaf'));
+    tw.type = 'button';
+    tw.setAttribute('aria-label', open ? 'Sbalit' : 'Rozbalit');
+    tw.setAttribute('aria-expanded', String(open));
+    tw.innerHTML = kids.length ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>' : '';
+    if (open) tw.classList.add('open');
+    tw.addEventListener('click', () => { if (!kids.length) return; if (open) S.treeOpen.delete(key); else S.treeOpen.add(key); renderTree(); });
+    const ids = node.group ? node.children.flatMap(descIds) : descIds(node);
+    const allHidden = ids.length > 0 && ids.every((i) => S.hidden.has(i));
+    const eye = el('button', 'eye');
+    eye.type = 'button';
+    eye.disabled = !ids.length;
+    eye.innerHTML = allHidden ? EYE_OFF : EYE;
+    eye.setAttribute('aria-label', allHidden ? 'Zobrazit' : 'Skrýt');
+    eye.addEventListener('click', () => setHiddenFor(ids, !allHidden));
+    const lab = el('button', 'tlabel');
+    lab.type = 'button';
+    const t = node.group ? node.cls : typeOfNode(node);
+    const nm = node.group ? classLabel(node.cls) : (nodeName(node.expressID) || prettyCls(t));
+    lab.append(el('span', 'tname', nm), el('span', 'tcls', node.group ? `${prettyCls(node.cls)} · ${node.children.length}` : prettyCls(t)));
+    const hasGeo = !node.group && S.elements.has(node.expressID);
+    if (hasGeo && node.expressID === S.selected) row.classList.add('is-sel');
+    if (allHidden) row.classList.add('is-off');
+    lab.addEventListener('click', () => {
+      if (hasGeo) { if (S.selected === node.expressID) deselect(); else select(node.expressID, { keepPanel: true }); }
+      else if (kids.length) { if (open) S.treeOpen.delete(key); else S.treeOpen.add(key); renderTree(); }
+    });
+    const cnt = el('span', 'row-count', ids.length && (kids.length || node.group) ? ids.length.toLocaleString('cs-CZ') : '');
+    row.append(tw, eye, lab, cnt);
+    li.appendChild(row);
+    if (open && kids.length) {
+      const sub = el('ul', 'tree');
+      const lim = S.treeLimit.get(key) || TREE_PAGE;
+      kids.slice(0, lim).forEach((k) => add(k, depth + 1, sub));
+      if (kids.length > lim) {
+        const more = el('button', 'link tmore', `Zobrazit dalších ${Math.min(TREE_PAGE, kids.length - lim)} z ${kids.length - lim}`);
+        more.type = 'button';
+        more.style.marginLeft = `${18 + (depth + 1) * 14}px`;
+        more.addEventListener('click', () => { S.treeLimit.set(key, lim + TREE_PAGE); renderTree(); });
+        const mli = el('li'); mli.appendChild(more); sub.appendChild(mli);
+      }
+      li.appendChild(sub);
+    }
+    parentUl.appendChild(li);
+  };
+  // project / site / building open by default
+  if (!S.treeOpen.size) {
+    const openDown = (n, d) => { if (d > 2) return; S.treeOpen.add(nodeKey(n)); treeChildren(n).forEach((c) => { if (SPATIAL.has(U(c.type))) openDown(c, d + 1); }); };
+    openDown(S.tree, 0);
+    S.treeOpen.add('__init');
+  }
+  add(S.tree, 0, ul);
+  root.appendChild(ul);
+  if (reveal) {
+    const sel = root.querySelector('.tnode.is-sel');
+    if (sel) sel.scrollIntoView({ block: 'center' }); else root.scrollTop = scroll;
+  } else root.scrollTop = scroll;
+}
+
 /* ---------- BCF 2.1 ---------- */
 const BCF_TYPES = [['Issue', 'Problém'], ['Request', 'Požadavek'], ['Comment', 'Komentář'], ['Clash', 'Kolize'], ['Info', 'Informace']];
 const BCF_STATUS = [['Open', 'Otevřeno'], ['In Progress', 'Řeší se'], ['Resolved', 'Vyřešeno'], ['Closed', 'Uzavřeno']];
@@ -1050,12 +1312,19 @@ function applyViewpoint(t) {
   }
   if (vp.clip) {
     const loc = toScenePoint(new THREE.Vector3().fromArray(vp.clip.loc));
-    const n = toSceneDir(new THREE.Vector3().fromArray(vp.clip.dir)).negate(); // normal = kept side
-    const ax = ['x', 'y', 'z'].reduce((a, b) => (Math.abs(n[b]) > Math.abs(n[a]) ? b : a), 'x');
-    const mode = ax === 'y' ? 'h' : (clipAxisKey('cross') === ax ? 'cross' : 'long');
+    const n = toSceneDir(new THREE.Vector3().fromArray(vp.clip.dir)).negate().normalize(); // normal = kept side
+    let mode = 'h';
+    if (Math.abs(n.y) < 0.9) {
+      const deg = THREE.MathUtils.radToDeg(Math.atan2(n.z, n.x));
+      const base = S.baseAngle || 0;
+      const dc = wrap180(deg - base), dl = wrap180(deg - base - 90);
+      mode = Math.abs(dc) <= Math.abs(dl) ? 'cross' : 'long';
+      clip.rot[mode] = mode === 'cross' ? dc : dl;
+    }
     clip.mode = mode;
-    clip.vals[mode] = loc[ax];
-    clip.flip[mode] = n[ax] > 0;
+    const cn = clipNormal(mode);
+    clip.flip[mode] = n.dot(cn) > 0;
+    clip.vals[mode] = cn.dot(loc);
     S.clipOn = true; S.clipPanel = false;
     applyClipMode(); updateClipUi(); updateToolbar();
   } else if (S.clipOn) {
@@ -1468,6 +1737,8 @@ function showPanel(name) {
   $('#panel-model').hidden = name !== 'model';
   $('#panel-props').hidden = name !== 'props';
   $('#panel-bcf').hidden = name !== 'bcf';
+  $('#panel-tree').hidden = name !== 'tree';
+  if (name === 'tree') renderTree(true);
   app.classList.add('sheet-open');
   $('#btn-sheet').setAttribute('aria-expanded', 'true');
 }

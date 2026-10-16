@@ -5,8 +5,9 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 **Umí:**
 - 3D zobrazení s dotykovým ovládáním: jeden prst otáčí, dva prsty posouvají a zoomují, klepnutí vybere prvek
 - vlastnosti prvku: atributy, GlobalId, materiál, všechny Psety a Qsety včetně vlastností typu
-- filtrování podle podlaží a kategorií IFC, skrytí a izolace prvků
-- vodorovný, příčný a podélný řez, půdorys podlaží
+- strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků
+- místnosti (IfcSpace) jako průhledné objemy, zapínají se v panelu Model
+- vodorovný, příčný a podélný řez, půdorys podlaží; svislé řezy se samy zarovnají na natočení budovy a jdou ručně natáčet nebo zarovnat kolmo na vybraný prvek
 - měření vzdáleností s přichytáváním k rohům
 - BCF 2.1: záznamy k prvkům (pohled, řez, vybraný prvek, snímek), komentáře, export a import `.bcfzip`
 - práci offline po prvním otevření
