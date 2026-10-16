@@ -1996,6 +1996,13 @@ function mapLinks(w) {
   return wrap;
 }
 function renderGeo() {
+  try { renderGeoInner(); } catch (e) {
+    console.error(e);
+    const root = $('#panel-geo');
+    if (root) root.replaceChildren(el('p', 'muted pad', `Záložku Geo se nepodařilo zobrazit: ${e.message}`));
+  }
+}
+function renderGeoInner() {
   const root = $('#panel-geo');
   if (!root) return;
   root.replaceChildren();
@@ -2987,16 +2994,35 @@ async function openFile(file) {
   if (mb > 150) toast('Velký model: pokud se iPad zpomalí, vypněte hrany nebo skryjte část podlaží.');
 }
 $('#file-input').addEventListener('change', (e) => { openFile(e.target.files[0]); e.target.value = ''; });
-['dragenter', 'dragover'].forEach((ev) => document.addEventListener(ev, (e) => { e.preventDefault(); $('#drop').hidden = false; }));
-['dragleave', 'drop'].forEach((ev) => document.addEventListener(ev, (e) => {
+/* přetažení souboru z počítače. Na iPadu se táhnou i odkazy a obrázky z aplikace
+   (dlouhé podržení) – ty ignorujeme, jinak by překryvná vrstva zůstala viset přes celou obrazovku. */
+const dropEl = $('#drop');
+let dropTimer = 0;
+const isFileDrag = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+function hideDrop() { dropEl.hidden = true; clearTimeout(dropTimer); }
+['dragenter', 'dragover'].forEach((ev) => document.addEventListener(ev, (e) => {
+  if (!isFileDrag(e)) return;
   e.preventDefault();
-  if (ev === 'dragleave' && e.relatedTarget) return;
-  $('#drop').hidden = true;
-  if (ev === 'drop') {
-    const f = e.dataTransfer.files[0];
-    if (f && /\.(bcfzip|bcf|zip)$/i.test(f.name)) bcfImport(f); else openFile(f);
-  }
+  dropEl.hidden = false;
+  clearTimeout(dropTimer);
+  dropTimer = setTimeout(hideDrop, 1500); // pojistka, když prohlížeč nepošle dragleave
 }));
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) hideDrop(); });
+document.addEventListener('dragend', hideDrop);
+document.addEventListener('drop', (e) => {
+  hideDrop();
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f && /\.(bcfzip|bcf|zip)$/i.test(f.name)) bcfImport(f); else openFile(f);
+});
+dropEl.addEventListener('pointerdown', hideDrop);
+// odkazy a obrázky v rozhraní se nemají tahat
+document.addEventListener('dragstart', (e) => { if (e.target?.closest?.('#app, .modal')) e.preventDefault(); });
+
+/* nečekaná chyba: ukázat ji místo tichého zamrznutí (pomůže s laděním na iPadu) */
+window.addEventListener('error', (e) => { try { toast(`Chyba: ${e.message || e.error || 'neznámá'}`, true); } catch (_) { /* ignore */ } });
+window.addEventListener('unhandledrejection', (e) => { try { toast(`Chyba: ${e.reason?.message || e.reason || 'neznámá'}`, true); } catch (_) { /* ignore */ } });
 
 /* ---------- boot ---------- */
 renderModelPanel();
