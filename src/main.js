@@ -2293,7 +2293,7 @@ function descIds(node) {
   if (descCache.has(node)) return descCache.get(node);
   const out = [];
   if (S.elements.has(node.expressID)) out.push(node.expressID);
-  for (const c of node.children || []) out.push(...descIds(c));
+  for (const c of node.children || []) { const d = descIds(c); for (let i = 0; i < d.length; i++) out.push(d[i]); } // bez spread: velké modely
   descCache.set(node, out);
   return out;
 }
@@ -2314,9 +2314,13 @@ function treeChildren(node) {
   return [...spatial, ...g];
 }
 const nodeKey = (n) => (n.group ? n.key : String(n.expressID));
+/* cesta ke hledanému prvku; skupina (např. „Dveře“) už se znovu neseskupuje,
+   jinak by se hledání zacyklilo */
 function findPath(node, id, path = []) {
-  if (node.expressID === id) return [...path, node];
-  for (const c of treeChildren(node)) {
+  if (!node.group && node.expressID === id) return [...path, node];
+  if (!node.group && !descIds(node).includes(id)) return null; // rychlé odříznutí větví bez prvku
+  const kids = node.group ? node.children : treeChildren(node);
+  for (const c of kids) {
     const r = findPath(c, id, [...path, node]);
     if (r) return r;
   }
@@ -2351,7 +2355,7 @@ function renderTree(reveal = false) {
     tw.innerHTML = kids.length ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>' : '';
     if (open) tw.classList.add('open');
     tw.addEventListener('click', () => { if (!kids.length) return; if (open) S.treeOpen.delete(key); else S.treeOpen.add(key); renderTree(); });
-    const ids = node.group ? node.children.flatMap(descIds) : descIds(node);
+    const ids = node.group ? node.children.reduce((acc, c) => { const d = descIds(c); for (let i = 0; i < d.length; i++) acc.push(d[i]); return acc; }, []) : descIds(node);
     const allHidden = ids.length > 0 && ids.every((i) => S.hidden.has(i));
     const eye = el('button', 'eye');
     eye.type = 'button';
