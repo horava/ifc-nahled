@@ -423,6 +423,7 @@ function applyVisibility() {
 /* ---------- selection ---------- */
 function select(id, opts = {}) {
   deselect(false);
+  S.inspectId = null;
   const rec = S.elements.get(id);
   if (!rec) return;
   S.selected = id;
@@ -456,6 +457,7 @@ function deselect(render = true) {
     }
   }
   S.selected = null;
+  S.inspectId = null;
   if (render) {
     updateToolbar(); renderProps(); requestRender(); updateRotLabel();
     if (!$('#panel-tree').hidden) renderTree();
@@ -1037,7 +1039,7 @@ function showAll() {
 const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
 const EYE_OFF = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"/></svg>';
 
-function rowList(title, items, onToggle, onOnly) {
+function rowList(title, items, onToggle, onOnly, onName) {
   const sec = el('section', 'group');
   const h = el('h3', 'group-title', title);
   sec.appendChild(h);
@@ -1049,7 +1051,8 @@ function rowList(title, items, onToggle, onOnly) {
     vis.innerHTML = it.visible ? EYE : EYE_OFF;
     vis.setAttribute('aria-label', `${it.visible ? 'Skrýt' : 'Zobrazit'}: ${it.label}`);
     vis.addEventListener('click', () => onToggle(it));
-    const name = el('span', 'row-name');
+    const name = el(onName && it.id !== -1 ? 'button' : 'span', 'row-name' + (onName && it.id !== -1 ? ' row-link' : ''));
+    if (onName && it.id !== -1) { name.type = 'button'; name.title = 'Zobrazit vlastnosti'; name.addEventListener('click', () => onName(it)); }
     name.appendChild(el('span', 'row-label', it.label));
     if (it.sub) name.appendChild(el('span', 'row-sub', it.sub));
     const count = el('span', 'row-count', it.count.toLocaleString('cs-CZ'));
@@ -1131,7 +1134,8 @@ function renderModelPanel() {
 
   root.appendChild(rowList('Podlaží', [...S.storeys].reverse().map((s) => ({ ...s, label: s.name, ref: s })),
     (it) => { it.ref.visible = !it.ref.visible; S.isolated = null; applyVisibility(); renderModelPanel(); },
-    (it) => { S.storeys.forEach((s) => { s.visible = s === it.ref; }); S.isolated = null; applyVisibility(); renderModelPanel(); }));
+    (it) => { S.storeys.forEach((s) => { s.visible = s === it.ref; }); S.isolated = null; applyVisibility(); renderModelPanel(); },
+    (it) => inspect(it.ref.id, 'model')));
 
   const cls = [...S.classes.entries()].map(([k, c]) => ({ label: classLabel(k), sub: CLASS_LABELS[U(k)] ? k : '', count: c.count, visible: c.visible, ref: c, key: k }))
     .sort((a, b) => a.label.localeCompare(b.label, 'cs'));
@@ -1191,19 +1195,95 @@ function table(title, rows, extra) {
 }
 
 let propToken = 0;
+/* vlastnosti prvku bez geometrie (projekt, pozemek, budova, podlaží…) */
+function inspect(id, from) {
+  deselect(false);
+  S.inspectId = id;
+  S.inspectFrom = from || null;
+  updateToolbar(); requestRender();
+  if (!$('#panel-tree').hidden) renderTree();
+  showPanel('props');
+  renderProps();
+}
+const fmtUnitLen = (v) => {
+  const pu = S.geo?.pu ?? 1;
+  const m = v * pu;
+  return `${nf3s.format(m)} m${Math.abs(pu - 1) > 1e-9 ? ` (v souboru ${nf.format(v)} ${unitLabel(pu)})` : ''}`;
+};
+function addressText(a) {
+  if (!a || typeof a !== 'object') return '';
+  const lines = (Array.isArray(a.AddressLines) ? a.AddressLines : []).map(val).filter(Boolean);
+  const town = [val(a.PostalCode), val(a.Town)].filter(Boolean).join(' ');
+  return [...lines, town, val(a.Region), val(a.Country)].filter(Boolean).join(', ');
+}
+function dmsText(v) {
+  const a = Array.isArray(v) ? v : v?.value;
+  if (!Array.isArray(a) || a.length < 3) return '';
+  const n = a.map((x) => Number(GEO_NUM(x)));
+  const deg = n[0] + n[1] / 60 + n[2] / 3600 + (n[3] || 0) / 3.6e9;
+  return `${n[0]}° ${Math.abs(n[1])}′ ${Math.abs(n[2] + (n[3] || 0) / 1e6).toFixed(3).replace('.', ',')}″ (${nf6.format(deg)}°)`;
+}
+/* atributy typické pro prostorové třídy */
+function spatialRows(id, cls) {
+  const rows = [];
+  let L;
+  try { L = S.api.GetLine(S.modelID, id, true); } catch (e) { return rows; }
+  const c = U(cls);
+  const num = (k) => GEO_NUM(L?.[k]);
+  if (c === 'IFCBUILDINGSTOREY') {
+    const e = num('Elevation');
+    if (e != null) {
+      rows.push(['Elevation', fmtUnitLen(e)]);
+      if (S.geo?.ok) {
+        const H = geoMapFromLocal({ x: 0, y: 0, z: e * (S.geo.pu ?? 1) }).H;
+        rows.push([`${geoLabels()[2]} podlahy`, nf3s.format(H)]);
+      }
+    }
+    const st = S.storeys.find((s0) => s0.id === id);
+    if (st) rows.push(['Prvků s geometrií', st.count.toLocaleString('cs-CZ')]);
+  }
+  if (c === 'IFCBUILDING') {
+    const r = num('ElevationOfRefHeight'), t = num('ElevationOfTerrain');
+    if (r != null) rows.push(['ElevationOfRefHeight', fmtUnitLen(r)]);
+    if (t != null) rows.push(['ElevationOfTerrain', fmtUnitLen(t)]);
+    const ad = addressText(L?.BuildingAddress);
+    if (ad) rows.push(['BuildingAddress', ad]);
+  }
+  if (c === 'IFCSITE') {
+    const la = dmsText(L?.RefLatitude), lo = dmsText(L?.RefLongitude);
+    if (la) rows.push(['RefLatitude', la]);
+    if (lo) rows.push(['RefLongitude', lo]);
+    const re = num('RefElevation');
+    if (re != null) rows.push(['RefElevation', fmtUnitLen(re)]);
+    const lt = val(L?.LandTitleNumber);
+    if (lt) rows.push(['LandTitleNumber', lt]);
+    const ad = addressText(L?.SiteAddress);
+    if (ad) rows.push(['SiteAddress', ad]);
+  }
+  if (c === 'IFCPROJECT') {
+    if (S.meta?.schema) rows.push(['Schéma', S.meta.schema]);
+    rows.push(['Jednotky délky', unitLabel(S.geo?.pu ?? 1)]);
+    if (S.geo?.ok) rows.push(['Georeference', S.geo.epsg ? `EPSG:${S.geo.epsg}` : (S.geo.crs?.name || 'ano')]);
+  }
+  const ct = val(L?.CompositionType);
+  if (ct) rows.push(['CompositionType', ct]);
+  return rows;
+}
 async function renderProps() {
   const root = $('#panel-props');
   const token = ++propToken;
-  if (S.selected == null) {
+  if (S.selected == null && S.inspectId == null) {
     root.replaceChildren();
     const empty = el('div', 'props-empty');
     empty.append(el('p', 'props-empty-title', 'Žádný vybraný prvek'),
-      el('p', 'muted', 'Klepněte na prvek v modelu. Zobrazí se jeho atributy a všechny sady vlastností včetně vlastností typu.'));
+      el('p', 'muted', 'Klepněte na prvek v modelu. Zobrazí se jeho atributy a všechny sady vlastností včetně vlastností typu. Vlastnosti projektu, pozemku, budovy a podlaží zobrazíte klepnutím na jejich název ve Stromu.'));
     root.appendChild(empty);
     return;
   }
-  const id = S.selected, api = S.api, mid = S.modelID;
+  const id = S.selected ?? S.inspectId, api = S.api, mid = S.modelID;
   const rec = S.elements.get(id);
+  let cls = rec?.cls;
+  if (!cls) { try { cls = api.GetNameFromTypeCode(api.GetLineType(mid, id)); } catch (e) { cls = 'IfcObject'; } }
   root.replaceChildren(el('p', 'muted pad', 'Načítám vlastnosti…'));
   try {
     const item = await api.properties.getItemProperties(mid, id, false);
@@ -1233,9 +1313,16 @@ async function renderProps() {
 
     root.replaceChildren();
     const head = el('header', 'el-head');
-    head.appendChild(el('div', 'el-class', rec.cls));
-    head.appendChild(el('h2', 'el-name', val(item.Name) || classLabel(rec.cls)));
-    const st = S.storeys.find((s) => s.id === rec.storey);
+    if (!rec && S.inspectFrom === 'tree') {
+      const back = el('button', 'link back-link', '← Zpět do stromu'); back.type = 'button';
+      back.addEventListener('click', () => showPanel('tree'));
+      head.appendChild(back);
+    }
+    head.appendChild(el('div', 'el-class', prettyCls(cls)));
+    head.appendChild(el('h2', 'el-name', val(item.Name) || classLabel(cls)));
+    const ln = val(item.LongName);
+    if (!rec && ln && ln !== val(item.Name)) head.appendChild(el('div', 'el-storey', ln));
+    const st = rec ? S.storeys.find((s0) => s0.id === rec.storey) : null;
     if (st) head.appendChild(el('div', 'el-storey', st.name));
     const gid = val(item.GlobalId);
     if (gid) {
@@ -1245,10 +1332,12 @@ async function renderProps() {
       g.addEventListener('click', () => copy(gid, g));
       head.appendChild(g);
     }
-    const nb = el('button', 'sbtn primary bcf-new', 'Přidat BCF záznam');
-    nb.type = 'button';
-    nb.addEventListener('click', () => bcfStartNew());
-    head.appendChild(nb);
+    if (rec) {
+      const nb = el('button', 'sbtn primary bcf-new', 'Přidat BCF záznam');
+      nb.type = 'button';
+      nb.addEventListener('click', () => bcfStartNew());
+      head.appendChild(nb);
+    }
     root.appendChild(head);
 
     const attrs = [];
@@ -1259,8 +1348,9 @@ async function renderProps() {
     attrs.push(['Express ID', `#${id}`]);
     if (typeNames.length) attrs.push(['Typ', typeNames.join(', ')]);
     if (materials.length) attrs.push(['Materiál', materials.join(', ')]);
+    if (!rec) { try { attrs.push(...spatialRows(id, cls)); } catch (e) { console.warn(e); } }
     root.appendChild(table('Atributy', attrs));
-    try { const pos = geoElementRows(rec); if (pos.length) root.appendChild(table(S.geo?.ok ? 'Poloha v mapě' : 'Poloha v projektu', pos)); } catch (e) { console.warn(e); }
+    if (rec) try { const pos = geoElementRows(rec); if (pos.length) root.appendChild(table(S.geo?.ok ? 'Poloha v mapě' : 'Poloha v projektu', pos)); } catch (e) { console.warn(e); }
 
     const sorted = [...psets].sort((a, b) => {
       const qa = a.p.Quantities ? 1 : 0, qb = b.p.Quantities ? 1 : 0;
@@ -1274,7 +1364,7 @@ async function renderProps() {
       if (!rows.length) continue;
       root.appendChild(table(val(ps.Name) || 'Bez názvu', rows, ps.Quantities ? 'Množství' : from));
     }
-    if (!sorted.length) root.appendChild(el('p', 'muted pad', 'Prvek nemá žádné sady vlastností.'));
+    if (!sorted.length) root.appendChild(el('p', 'muted pad', 'Nemá žádné sady vlastností.'));
   } catch (e) {
     console.error(e);
     if (token === propToken) root.replaceChildren(el('p', 'muted pad', 'Vlastnosti se nepodařilo načíst.'));
@@ -1720,6 +1810,10 @@ const GEO_FMT_KEY = 'ifc-nahled-geo-format';
 let geoFormat = 'EN';
 try { geoFormat = localStorage.getItem(GEO_FMT_KEY) || 'EN'; } catch (e) { /* ignore */ }
 
+function jtskInRange(E, N) {
+  const Y = Math.abs(E), X = Math.abs(N);
+  return Y > 420000 && Y < 910000 && X > 930000 && X < 1240000;
+}
 function readGeoref() {
   const api = S.api, mid = S.modelID;
   const g = { ok: false, source: null, mc: null, crs: null, pu: 1, mu: null, trueNorth: null, wcsOffset: null, site: null, fix: false, checks: [] };
@@ -1813,9 +1907,25 @@ function readGeoref() {
   } catch (e) { /* ignore */ }
 
   g.mu = g.crs?.mapUnit ?? g.pu;
+  g.muInferred = null;
+  // MapUnit nevyplněné: podle normy platí jednotky projektu, ale exportéry běžně
+  // zapisují Eastings v metrech a rozdíl jednotek vyrovnají přes Scale (mm projekt → Scale 0,001).
+  // Jednotku mapy proto odvodíme ze Scale: Scale = jednotka projektu / jednotka mapy.
+  if (g.mc && g.crs?.mapUnit == null) {
+    const sx0 = g.mc.fx ?? g.mc.scale;
+    if (sx0 > 0) {
+      const cand = g.pu / sx0;
+      const snap = [1, 0.001, 0.01, 0.1, 0.3048, 0.0254, 1000].find((u) => Math.abs(cand / u - 1) < 0.01);
+      if (snap != null && Math.abs(snap / g.pu - 1) > 1e-9) { g.mu = snap; g.muInferred = 'scale'; }
+    }
+  }
   g.epsg = g.crs ? detectEpsg(g.crs.name, g.crs.desc) : null;
   g.def = g.epsg ? epsgDef(g.epsg) : null;
   g.jtsk = [5514, 5513, 2065].includes(g.epsg);
+  // S-JTSK: když vychází počátek mimo ČR a v metrech by seděl, jsou Eastings/Northings v metrech
+  if (g.mc && g.jtsk && g.crs?.mapUnit == null && !g.muInferred && !jtskInRange(g.mc.E * g.mu, g.mc.N * g.mu) && jtskInRange(g.mc.E, g.mc.N)) {
+    g.mu = 1; g.muInferred = 'range';
+  }
   g.jtskPositive = g.jtsk && g.mc && (g.mc.E > 0 || g.mc.N > 0);
   if (g.def) { try { proj4.defs(`EPSG:${g.epsg}`, g.def[1]); } catch (e) { g.def = null; } }
   g.ok = !!g.mc;
@@ -1936,13 +2046,15 @@ function runGeoChecks() {
   } else {
     add('ok', 'Jednotky', `Projekt ${unitLabel(g.pu)}, mapa ${unitLabel(g.mu)}, Scale ${nf.format(g.mc.scale)}.`);
   }
+  if (g.muInferred === 'scale') add('info', 'MapUnit není vyplněné', `IfcProjectedCRS nemá MapUnit. Podle normy by Eastings/Northings byly v jednotkách projektu (${unitLabel(g.pu)}), ale Scale ${nf.format(g.mc.scale)} ukazuje na mapu v ${unitLabel(g.mu)}. Aplikace proto počítá s ${unitLabel(g.mu)}. Doporučení: v exportu vyplnit MapUnit.`);
+  if (g.muInferred === 'range') add('warn', 'MapUnit není vyplněné', `IfcProjectedCRS nemá MapUnit a Eastings/Northings v jednotkách projektu (${unitLabel(g.pu)}) by ležely mimo ČR. Aplikace je vykládá v metrech. Doporučení: v exportu vyplnit MapUnit.`);
   if (!g.unitMismatch && Math.abs(g.mc.scale - g.pu / g.mu) > 1e-9 && Math.abs(g.mc.scale - 1) < 0.01) {
     add('info', 'Měřítko ≠ 1', `Scale ${nf.format(g.mc.scale)} pravděpodobně zahrnuje měřítkový faktor zobrazení.`);
   }
   // S-JTSK
   if (g.jtsk) {
     if (g.jtskPositive && g.epsg === 5514) add('warn', 'Kladné souřadnice v EPSG:5514', 'EPSG:5514 (East-North) má na území ČR záporné souřadnice. Kladné hodnoty odpovídají Y/X (EPSG:5513). Aplikace je vykládá jako Y/X.');
-    const [Y, X] = g.jtskPositive ? [g.mc.E, g.mc.N] : [-g.mc.E, -g.mc.N];
+    const [Y, X] = (g.jtskPositive ? [g.mc.E, g.mc.N] : [-g.mc.E, -g.mc.N]).map((v) => v * (g.fix ? 1 : g.mu));
     if (Y < 420000 || Y > 910000 || X < 930000 || X > 1240000) add('warn', 'Počátek mimo území ČR', `Y ${nf3s.format(Y)}, X ${nf3s.format(X)} neleží v rozsahu S-JTSK pro ČR. Zkontrolujte jednotky a znaménka.`);
     else add('ok', 'Poloha v rozsahu S-JTSK', `Y ${nf3s.format(Y)}, X ${nf3s.format(X)}.`);
   }
@@ -2051,7 +2163,7 @@ function renderGeoInner() {
       root.appendChild(geoTable('IfcProjectedCRS', [
         ['Name', g.crs.name], ['Description', g.crs.desc], ['GeodeticDatum', g.crs.geodetic], ['VerticalDatum', g.crs.vertical],
         g.crs.projection && ['MapProjection', g.crs.projection], g.crs.zone && ['MapZone', g.crs.zone],
-        ['MapUnit', g.crs.mapUnit != null ? unitLabel(g.crs.mapUnit) : '— (platí jednotky projektu)'],
+        ['MapUnit', g.crs.mapUnit != null ? unitLabel(g.crs.mapUnit) : g.muInferred ? `— (nevyplněno, odvozeno: ${unitLabel(g.mu)})` : '— (platí jednotky projektu)'],
       ]));
     }
     const ex = geoTrueNorthExpected();
@@ -2369,10 +2481,11 @@ function renderTree(reveal = false) {
     const nm = node.group ? classLabel(node.cls) : (nodeName(node.expressID) || prettyCls(t));
     lab.append(el('span', 'tname', nm), el('span', 'tcls', node.group ? `${prettyCls(node.cls)} · ${node.children.length}` : prettyCls(t)));
     const hasGeo = !node.group && S.elements.has(node.expressID);
-    if (hasGeo && node.expressID === S.selected) row.classList.add('is-sel');
+    if (!node.group && (node.expressID === S.selected || node.expressID === S.inspectId)) row.classList.add('is-sel');
     if (allHidden) row.classList.add('is-off');
     lab.addEventListener('click', () => {
       if (hasGeo) { if (S.selected === node.expressID) deselect(); else select(node.expressID, { keepPanel: true }); }
+      else if (!node.group) inspect(node.expressID, 'tree');
       else if (kids.length) { if (open) S.treeOpen.delete(key); else S.treeOpen.add(key); renderTree(); }
     });
     const cnt = el('span', 'row-count', ids.length && (kids.length || node.group) ? ids.length.toLocaleString('cs-CZ') : '');

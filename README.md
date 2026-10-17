@@ -7,6 +7,7 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - půdorys na rozdělené obrazovce (vedle 3D na šířku, pod ním na výšku) s přetahovatelným předělem; posun a zoom půdorysu, poloha a směr kamery, klepnutím se přesuneš na místo ve výšce očí; výběr podlaží v půdorysu zároveň udělá ve 3D vodorovný řez tímto podlažím
 - otáčení kolem vybraného prvku (přepínač Kolem prvku), dvojité klepnutí nastaví střed otáčení na bod modelu
 - vlastnosti prvku: atributy, GlobalId, materiál, všechny Psety a Qsety včetně vlastností typu
+- vlastnosti projektu, pozemku (RefLatitude/RefLongitude, adresa), budovy a podlaží (Elevation, výška v Bpv): klepnutím na název ve Stromu nebo na podlaží v panelu Model
 - strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků
 - místnosti (IfcSpace) jako průhledné objemy, zapínají se v panelu Model
 - vodorovný, příčný a podélný řez, půdorys podlaží; svislé řezy se samy zarovnají na natočení budovy a jdou ručně natáčet nebo zarovnat kolmo na vybraný prvek

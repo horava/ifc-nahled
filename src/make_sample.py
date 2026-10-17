@@ -142,6 +142,16 @@ for s, z in storeys:
         paint(col, s_col)
         pset(col, "Pset_ColumnCommon", {"LoadBearing": True, "IsExternal": False, "FireRating": "R 60"})
 
+# vlastnosti prostorových tříd
+pset(site, "Pset_SiteCommon", {"BuildableArea": 1200.0, "TotalArea": 2400.0})
+pset(bld, "Pset_BuildingCommon", {"NumberOfStoreys": 2, "YearOfConstruction": "2026"})
+pset(bld, "MU_Pasport", {"KodBudovy": "BHA01", "Areal": "Ukázkový areál"})
+addr = f.createIfcPostalAddress(None, None, None, None, ["Ukázková 1"], None, "Brno", "Jihomoravský kraj", "602 00", "Česko")
+bld.BuildingAddress = addr
+bld.ElevationOfRefHeight = 231.5
+for s_, _z in storeys:
+    pset(s_, "MU_Pasport", {"KodPodlazi": "BHA01" + ("N01" if s_.Name == "1.NP" else "N02"), "NazevPodlazi": s_.Name})
+
 # door on ground floor, north facade
 s0 = storeys[0][0]
 door = api.run("root.create_entity", f, ifc_class="IfcDoor", name="Vstupní dveře D1")
