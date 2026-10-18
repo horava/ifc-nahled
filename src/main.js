@@ -595,15 +595,54 @@ function doubleTap(cx, cy) {
   setTimeout(() => showPivot(P, false), 470);
 }
 
+/* kandidáti pod prstem pro výběr: každý prvek jednou, podle vzdálenosti.
+   Místnost má přednost před plochou, která s ní splývá (podlaha, stěna) –
+   jinak by o výsledku rozhodovala náhoda v zaokrouhlení. */
+const isSpaceId = (id) => U(S.elements.get(id)?.cls || '') === 'IFCSPACE';
+function pickCandidates(cx, cy) {
+  const r = renderer.domElement.getBoundingClientRect();
+  ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false)
+    .filter((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
+  const seen = new Set(), list = [];
+  for (const h of hits) {
+    const id = h.object.userData.id;
+    if (id == null || seen.has(id)) continue;
+    seen.add(id); list.push({ id, d: h.distance });
+  }
+  if (list.length > 1 && !isSpaceId(list[0].id)) {
+    const eps = Math.max(0.05, list[0].d * 0.004);
+    const k = list.findIndex((c) => c.d - list[0].d <= eps && isSpaceId(c.id));
+    if (k > 0) list.unshift(...list.splice(k, 1));
+  }
+  return list.slice(0, 8).map((c) => c.id);
+}
+/* opakované ťuknutí na stejné místo vybere další prvek pod prstem */
+let tapCycle = null;
+let cycleHint = 0;
 function pick(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
-  const hit = hitAt(cx, cy);
-  if (coord.on) { if (hit) addGeoPoint(hit, cx - r.left, cy - r.top); return; }
-  if (S.measure.on) { if (hit) measurePoint(hit, cx - r.left, cy - r.top); return; }
-  if (hit) {
-    const id = hit.object.userData.id;
-    if (id === S.selected) deselect(); else select(id);
-  } else deselect();
+  if (coord.on || S.measure.on) {
+    const hit = hitAt(cx, cy);
+    if (!hit) return;
+    if (coord.on) addGeoPoint(hit, cx - r.left, cy - r.top); else measurePoint(hit, cx - r.left, cy - r.top);
+    return;
+  }
+  const same = tapCycle && Math.hypot(cx - tapCycle.x, cy - tapCycle.y) < 16 && S.selected != null && tapCycle.ids.includes(S.selected);
+  if (same) {
+    const ids = tapCycle.ids, i = ids.indexOf(S.selected) + 1;
+    if (i >= ids.length) { tapCycle = null; deselect(); return; }
+    select(ids[i]);
+    toast(`Pod prstem ${i + 1}/${ids.length}: ${nodeName(ids[i]) || classLabel(S.elements.get(ids[i])?.cls || '')}`);
+    return;
+  }
+  const ids = pickCandidates(cx, cy);
+  if (!ids.length) { tapCycle = null; deselect(); return; }
+  tapCycle = { x: cx, y: cy, ids };
+  if (ids[0] === S.selected) { tapCycle = null; deselect(); return; }
+  select(ids[0]);
+  if (ids.length > 1 && cycleHint < 2) { cycleHint++; toast('Další ťuknutí na stejné místo vybere prvek pod ním.'); }
 }
 
 /* ---------- camera ---------- */
@@ -1223,6 +1262,59 @@ function dmsText(v) {
   const deg = n[0] + n[1] / 60 + n[2] / 3600 + (n[3] || 0) / 3.6e9;
   return `${n[0]}° ${Math.abs(n[1])}′ ${Math.abs(n[2] + (n[3] || 0) / 1e6).toFixed(3).replace('.', ',')}″ (${nf6.format(deg)}°)`;
 }
+/* místnosti (IfcSpace) uvnitř prostorového prvku: podle stromu i podle přiřazení geometrie */
+function spacesIn(id) {
+  const out = new Set();
+  let node = null;
+  const stack = S.tree ? [S.tree] : [];
+  while (stack.length && !node) {
+    const n = stack.pop();
+    if (n.expressID === id) node = n; else for (const c of n.children || []) stack.push(c);
+  }
+  if (node) {
+    const st2 = [node];
+    while (st2.length) {
+      const n = st2.pop();
+      if (n !== node && U(n.type || '') === 'IFCSPACE') out.add(n.expressID);
+      for (const c of n.children || []) st2.push(c);
+    }
+  }
+  if (S.storeys.some((s0) => s0.id === id)) {
+    for (const [eid, rec] of S.elements) if (rec.storey === id && U(rec.cls) === 'IFCSPACE') out.add(eid);
+  }
+  return [...out];
+}
+function spaceSection(ids) {
+  const coll = new Intl.Collator('cs', { numeric: true });
+  const items = ids.map((sid) => {
+    let name = '', ln = '';
+    try { const l = S.api.GetLine(S.modelID, sid); name = val(l?.Name); ln = val(l?.LongName); } catch (e) { /* ignore */ }
+    return { sid, name, ln };
+  }).sort((a, b) => coll.compare(a.name || a.ln, b.name || b.ln));
+  const sec = el('section', 'pset');
+  const h = el('h3', 'pset-title', 'Místnosti');
+  h.appendChild(el('span', 'pset-tag', String(items.length)));
+  sec.appendChild(h);
+  const list = el('div', 'space-list');
+  const LIMIT = 300;
+  items.slice(0, LIMIT).forEach(({ sid, name, ln }) => {
+    const b = el('button', 'space-item');
+    b.type = 'button';
+    b.append(el('span', 'space-no', name || `#${sid}`), el('span', 'space-ln', ln && ln !== name ? ln : ''));
+    b.addEventListener('click', () => {
+      const rec = S.elements.get(sid);
+      if (!rec) { inspect(sid, null); return; }
+      const c = S.classes.get(rec.cls);
+      if (c && !c.visible) { c.visible = true; S.isolated = null; applyVisibility(); renderModelPanel(); }
+      if (S.hidden.has(sid)) { S.hidden.delete(sid); applyVisibility(); }
+      select(sid);
+    });
+    list.appendChild(b);
+  });
+  if (items.length > LIMIT) list.appendChild(el('p', 'muted small', `… a dalších ${items.length - LIMIT}`));
+  sec.appendChild(list);
+  return sec;
+}
 /* atributy typické pro prostorové třídy */
 function spatialRows(id, cls) {
   const rows = [];
@@ -1241,6 +1333,7 @@ function spatialRows(id, cls) {
     }
     const st = S.storeys.find((s0) => s0.id === id);
     if (st) rows.push(['Prvků s geometrií', st.count.toLocaleString('cs-CZ')]);
+    rows.push(['Počet místností', String(spacesIn(id).length)]);
   }
   if (c === 'IFCBUILDING') {
     const r = num('ElevationOfRefHeight'), t = num('ElevationOfTerrain');
@@ -1248,6 +1341,7 @@ function spatialRows(id, cls) {
     if (t != null) rows.push(['ElevationOfTerrain', fmtUnitLen(t)]);
     const ad = addressText(L?.BuildingAddress);
     if (ad) rows.push(['BuildingAddress', ad]);
+    rows.push(['Počet místností', String(spacesIn(id).length)]);
   }
   if (c === 'IFCSITE') {
     const la = dmsText(L?.RefLatitude), lo = dmsText(L?.RefLongitude);
@@ -1350,6 +1444,9 @@ async function renderProps() {
     if (materials.length) attrs.push(['Materiál', materials.join(', ')]);
     if (!rec) { try { attrs.push(...spatialRows(id, cls)); } catch (e) { console.warn(e); } }
     root.appendChild(table('Atributy', attrs));
+    if (!rec && ['IFCBUILDINGSTOREY', 'IFCBUILDING'].includes(U(cls))) {
+      try { const sp = spacesIn(id); if (sp.length) root.appendChild(spaceSection(sp)); } catch (e) { console.warn(e); }
+    }
     if (rec) try { const pos = geoElementRows(rec); if (pos.length) root.appendChild(table(S.geo?.ok ? 'Poloha v mapě' : 'Poloha v projektu', pos)); } catch (e) { console.warn(e); }
 
     const sorted = [...psets].sort((a, b) => {
