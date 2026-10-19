@@ -390,6 +390,82 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
 .modal-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 12px 18px; border-top: 1px solid var(--line); }
 .small { font-size: 12px; }
 .form-error { margin: 0; color: var(--error); font-size: 13px; }
+
+/* záložky: při nedostatku místa se posouvají */
+.tabs { overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { flex: 1 0 auto; padding: 0 10px; white-space: nowrap; }
+.tab[hidden] { display: none; }
+/* hledání */
+.search-box { position: sticky; top: 0; z-index: 2; padding: 12px 16px 8px; background: var(--panel); }
+.search-input { box-sizing: border-box; width: 100%; min-height: 42px; border-radius: 10px; border: 1px solid var(--line); background: var(--ground); color: var(--ink); font: inherit; font-size: 15px; padding: 0 12px; }
+.search-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.flt-list { display: grid; gap: 8px; padding: 0 16px; }
+.flt-row { display: grid; gap: 6px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: var(--ground); }
+.flt-line { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 6px; align-items: center; }
+.flt-key, .flt-op, .flt-val, .color-key, #plan-labels { font: inherit; font-size: 14px; min-height: 38px; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 0 8px; min-width: 0; box-sizing: border-box; }
+.flt-key, .color-key { width: 100%; }
+.flt-val[hidden] { display: none; }
+.flt-add { padding: 6px 16px; }
+.search-help { padding: 4px 16px 16px; font-size: 13.5px; }
+.search-help p { margin: 8px 0 0; }
+.res-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 16px 0; }
+.res-count { font-weight: 600; }
+.res-acts { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 4px; }
+.res-group { padding-bottom: 4px; }
+.res-item { display: grid; width: 100%; text-align: left; gap: 1px; padding: 8px 16px; min-height: 44px; border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); cursor: pointer; font: inherit; }
+.res-item:hover { background: var(--hover); }
+.res-item.on { background: color-mix(in srgb, var(--sel) 14%, transparent); }
+.res-name { font-size: 14px; overflow-wrap: anywhere; }
+.res-sub { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.more { padding: 8px 16px 16px; }
+/* barvení a legenda */
+.color-row { padding: 0 16px; }
+.color-quick { padding: 8px 16px 4px; flex-wrap: wrap; }
+.pad-x { padding: 4px 16px 0; margin: 0; }
+.legend { position: absolute; top: 12px; left: 12px; z-index: 3; width: min(250px, calc(100% - 84px)); max-height: calc(100% - 150px); display: flex; flex-direction: column; padding: 4px 4px 6px; }
+.lg-head { display: flex; align-items: center; gap: 2px; }
+.lg-title { flex: 1; min-width: 0; text-align: left; border: 0; background: none; color: var(--ink); font: inherit; font-weight: 600; font-size: 13px; padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+.lg-list { overflow-y: auto; display: grid; gap: 1px; }
+.lg-item { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 8px; align-items: center; min-height: 34px; padding: 4px 8px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.lg-item:hover { background: var(--hover); }
+.lg-item[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.lg-sw { width: 14px; height: 14px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.lg-sw.ghost { background: transparent; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.lg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lg-count { font-family: var(--f-mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.lg-hint { margin: 4px 8px 0; font-size: 11.5px; color: var(--muted); }
+.legend.collapsed .lg-list, .legend.collapsed .lg-hint { display: none; }
+.legend.collapsed .lg-title { cursor: pointer; }
+.legend.collapsed #lg-collapse svg { transform: rotate(180deg); }
+.badge.under-legend { display: none; }
+/* popisky místností v půdorysu */
+.rl { font-family: var(--f-body); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+.rl-num { font-size: 12.5px; font-weight: 600; fill: var(--ink); }
+.rl-name { font-size: 11.5px; font-weight: 500; fill: var(--ink); }
+.rl-area { font-size: 11.5px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+.plan-head { overflow-x: auto; scrollbar-width: none; }
+.plan-head::-webkit-scrollbar { display: none; }
+#plan-labels { font-size: 13px; min-height: 34px; background: var(--ground); flex: none; width: auto; max-width: 170px; }
+#plan-labels[hidden] { display: none; }
+/* porovnání verzí */
+.cmp-start { justify-self: start; cursor: pointer; display: inline-flex; align-items: center; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmp-file { font-family: var(--f-mono); font-size: 12.5px; overflow-wrap: anywhere; }
+.cmp-cats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 12px 16px 4px; }
+.cmp-cat { display: grid; justify-items: center; gap: 2px; padding: 8px 4px; border-radius: 10px; border: 1px solid var(--line); background: var(--ground); color: var(--ink); font: inherit; cursor: pointer; }
+.cmp-cat[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.cmp-cat-n { font-family: var(--f-mono); font-weight: 600; font-size: 15px; font-variant-numeric: tabular-nums; }
+.cmp-cat-l { font-size: 11.5px; color: var(--muted); }
+.cmp-kind { margin: 8px 16px 0; }
+.cmp-badge { justify-self: start; display: inline-block; font-size: 12.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; margin: 2px 0; }
+.cmp-sec .cmp-badge { margin: 0 16px 6px; }
+.cmp-badge.added { background: color-mix(in srgb, #0ca30c 18%, transparent); color: var(--ok); }
+.cmp-badge.changed { background: color-mix(in srgb, #fab219 24%, transparent); color: var(--warn); }
+.cmp-badge.removed { background: color-mix(in srgb, #d03b3b 16%, transparent); color: var(--error); }
+.cmp-badge.same { background: var(--hover); color: var(--muted); }
+.cmp-old { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
+.cmp-arrow { color: var(--muted); }
+.cmp-new { font-weight: 600; }
 @media (max-width: 719px) { .fld-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 719px) {
   :root { --panel-w: 100%; }
@@ -441,6 +517,15 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             <span>Ze složky Soubory, iCloudu nebo OneDrivu. Model se zpracuje přímo v zařízení.</span>
           </div>
         <div class="overlay" id="overlay"></div>
+          <div class="card legend" id="legend" hidden>
+            <div class="lg-head">
+              <button class="lg-title" id="lg-title" type="button"></button>
+              <button class="ib" id="lg-collapse" type="button" aria-label="Sbalit legendu"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></button>
+              <button class="ib" id="lg-close" type="button" aria-label="Vypnout barvení"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+            </div>
+            <div class="lg-list" id="lg-list"></div>
+            <p class="lg-hint" id="lg-hint"></p>
+          </div>
         <div class="pivot" id="pivot" hidden aria-hidden="true"></div>
           <div class="compass" id="compass" hidden aria-hidden="true"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" class="cmp-ring"/><g id="compass-needle"><path d="M20 5l5 15h-10z" class="cmp-n"/><path d="M20 35l5-15h-10z" class="cmp-s"/></g><text x="20" y="13.5" class="cmp-t" text-anchor="middle">S</text></svg></div>
         <div class="dock">
@@ -518,10 +603,17 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             <span class="plan-title">Půdorys</span>
             <select id="plan-storey" aria-label="Podlaží v půdorysu"></select>
             <span class="plan-label grow" id="plan-label"></span>
+            <select id="plan-labels" aria-label="Popisky místností" hidden>
+              <option value="off">Bez popisků</option>
+              <option value="num">Čísla místností</option>
+              <option value="name">Číslo a název</option>
+              <option value="full">Číslo, název, plocha</option>
+            </select>
             <select id="plan-orient" aria-label="Orientace půdorysu" hidden>
               <option value="project">Sever projektu</option>
               <option value="map">Sever mapy</option>
             </select>
+            <button class="ib" id="plan-save" type="button" aria-label="Uložit půdorys jako obrázek" title="Uložit půdorys jako obrázek (PNG)"><svg viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 19h14"/></svg></button>
             <button class="ib" id="plan-fit" type="button" aria-label="Celý půdorys" title="Celý půdorys"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
             <button class="ib" id="plan-close" type="button" aria-label="Zavřít půdorys"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
           </div>
@@ -549,19 +641,24 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
       <div class="tabs" role="tablist">
         <button class="tab" type="button" role="tab" data-tab="model" aria-selected="true">Model</button>
         <button class="tab" type="button" role="tab" data-tab="tree" aria-selected="false">Strom</button>
+        <button class="tab" type="button" role="tab" data-tab="search" aria-selected="false">Hledat</button>
         <button class="tab" type="button" role="tab" data-tab="props" aria-selected="false">Vlastnosti</button>
         <button class="tab" type="button" role="tab" data-tab="bcf" aria-selected="false">BCF <span class="count" id="bcf-count" hidden></span></button>
         <button class="tab" type="button" role="tab" data-tab="geo" aria-selected="false">Geo <span class="flag" id="geo-flag" hidden aria-label="Georeference má upozornění"></span></button>
+        <button class="tab" type="button" role="tab" data-tab="cmp" id="tab-cmp" aria-selected="false" hidden>Změny</button>
       </div>
       <div class="panel-body" id="panel-model"></div>
       <div class="panel-body" id="panel-tree" hidden></div>
+      <div class="panel-body" id="panel-search" hidden></div>
       <div class="panel-body" id="panel-props" hidden></div>
       <div class="panel-body" id="panel-bcf" hidden></div>
       <div class="panel-body" id="panel-geo" hidden></div>
+      <div class="panel-body" id="panel-cmp" hidden></div>
     </aside>
   </div>
   <div class="drop" id="drop" hidden>Pusťte sem IFC nebo BCF soubor</div>
   <input class="sr-only" id="bcf-input" type="file">
+  <input class="sr-only" id="cmp-input" type="file">
 
   <div class="modal" id="about-modal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title">

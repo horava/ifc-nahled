@@ -129,6 +129,7 @@ function applyTheme() {
   spaceMat.color.set(cssVar('--space') || '#3b82c4');
   measureMat.color.set(cssVar('--sel') || '#ff7a1a');
   clipOutlineMat.color.set(cssVar('--accent') || '#c94a10');
+  if (typeof S !== 'undefined' && S.color) { try { refreshColoring(); renderLegend(); } catch (e) { /* not ready */ } }
   requestRender();
 }
 applyTheme();
@@ -224,6 +225,8 @@ async function initApi() {
 
 function clearModel() {
   deselect();
+  resetFeatures();
+  S.modelGen = (S.modelGen || 0) + 1;
   const geos = new Set();
   modelGroup.traverse((o) => { if (o.geometry) geos.add(o.geometry); });
   geos.forEach((g) => g.dispose());
@@ -370,6 +373,7 @@ async function loadIfc(buffer, fileName) {
     S.coordMatrix = (() => { try { return new THREE.Matrix4().fromArray(api.GetCoordinationMatrix(modelID)); } catch (e) { return new THREE.Matrix4(); } })();
     bcfOnModelLoaded();
     geoOnModelLoaded();
+    featuresOnModelLoaded();
 
     renderModelPanel();
     renderProps();
@@ -449,6 +453,7 @@ function select(id, opts = {}) {
   if (plan.on) markPlanDirty(60);
 }
 function deselect(render = true) {
+  if (S.cmpSel != null) ghostDeselect();
   if (S.selected != null) {
     const rec = S.elements.get(S.selected);
     if (rec) for (const m of rec.meshes) {
@@ -603,11 +608,13 @@ function pickCandidates(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
   ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ptr, camera);
-  const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false)
+  const targets = S.meshes.filter((m) => m.visible);
+  if (S.cmp && cmpGroup.visible) targets.push(...(S.cmpGhosts || []));
+  const hits = ray.intersectObjects(targets, false)
     .filter((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
   const seen = new Set(), list = [];
   for (const h of hits) {
-    const id = h.object.userData.id;
+    const id = h.object.userData.id ?? (h.object.userData.ghost != null ? `g${h.object.userData.ghost}` : null);
     if (id == null || seen.has(id)) continue;
     seen.add(id); list.push({ id, d: h.distance });
   }
@@ -629,19 +636,20 @@ function pick(cx, cy) {
     if (coord.on) addGeoPoint(hit, cx - r.left, cy - r.top); else measurePoint(hit, cx - r.left, cy - r.top);
     return;
   }
-  const same = tapCycle && Math.hypot(cx - tapCycle.x, cy - tapCycle.y) < 16 && S.selected != null && tapCycle.ids.includes(S.selected);
+  const cur = S.cmpSel != null ? `g${S.cmpSel}` : S.selected;
+  const same = tapCycle && Math.hypot(cx - tapCycle.x, cy - tapCycle.y) < 16 && cur != null && tapCycle.ids.includes(cur);
   if (same) {
-    const ids = tapCycle.ids, i = ids.indexOf(S.selected) + 1;
+    const ids = tapCycle.ids, i = ids.indexOf(cur) + 1;
     if (i >= ids.length) { tapCycle = null; deselect(); return; }
-    select(ids[i]);
-    toast(`Pod prstem ${i + 1}/${ids.length}: ${nodeName(ids[i]) || classLabel(S.elements.get(ids[i])?.cls || '')}`);
+    selectAny(ids[i]);
+    toast(`Pod prstem ${i + 1}/${ids.length}: ${anyName(ids[i])}`);
     return;
   }
   const ids = pickCandidates(cx, cy);
   if (!ids.length) { tapCycle = null; deselect(); return; }
   tapCycle = { x: cx, y: cy, ids };
-  if (ids[0] === S.selected) { tapCycle = null; deselect(); return; }
-  select(ids[0]);
+  if (ids[0] === cur) { tapCycle = null; deselect(); return; }
+  selectAny(ids[0]);
   if (ids.length > 1 && cycleHint < 2) { cycleHint++; toast('Další ťuknutí na stejné místo vybere prvek pod ním.'); }
 }
 
@@ -1048,7 +1056,7 @@ $('#btn-orbit').addEventListener('click', () => setOrbitSel(!S.orbitSel));
 $('#btn-orbit').setAttribute('aria-pressed', String(S.orbitSel));
 $('#btn-edges').addEventListener('click', () => {
   S.edges = !S.edges;
-  modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges; });
+  modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges && !o.parent?.userData.ghost; });
   updateToolbar(); requestRender();
 });
 $('#btn-hide').addEventListener('click', () => {
@@ -1069,6 +1077,8 @@ $('#btn-focus').addEventListener('click', focusSelected);
 $('#btn-showall').addEventListener('click', showAll);
 function showAll() {
   S.hidden.clear(); S.isolated = null;
+  if (S.color) { S.color.only = null; renderLegend(); }
+  cmpGroup.visible = true;
   S.storeys.forEach((s) => { s.visible = true; });
   S.classes.forEach((c, k) => { c.visible = !HIDDEN_BY_DEFAULT.has(U(k)); });
   applyVisibility(); renderModelPanel();
@@ -1159,17 +1169,23 @@ function renderModelPanel() {
     sb.addEventListener('click', () => { c.visible = !c.visible; S.isolated = null; applyVisibility(); renderModelPanel(); });
     summary.appendChild(sb);
   }
+  const cb = el('label', 'sbtn cmp-start', S.cmp ? `Porovnáno se: ${S.cmp.oldName}` : 'Porovnat se starší verzí…');
+  cb.htmlFor = 'cmp-input';
+  cb.title = 'Vyberte starší verzi téhož modelu. Zobrazí se přidané, změněné a odebrané prvky.';
+  summary.appendChild(cb);
   root.appendChild(summary);
 
   if (S.isolated || S.hidden.size) {
     const note = el('div', 'notice');
-    note.append(el('span', null, S.isolated ? 'Zobrazen jen izolovaný prvek.' : `Skryto ručně: ${S.hidden.size} prvků.`));
+    note.append(el('span', null, S.isolated ? (S.isolated.size === 1 ? 'Zobrazen jen izolovaný prvek.' : `Zobrazeno jen ${S.isolated.size.toLocaleString('cs-CZ')} vybraných prvků.`) : `Skryto ručně: ${S.hidden.size} prvků.`));
     const b = el('button', 'link', 'Zobrazit vše');
     b.type = 'button';
     b.addEventListener('click', showAll);
     note.appendChild(b);
     root.appendChild(note);
   }
+
+  root.appendChild(colorSection());
 
   root.appendChild(rowList('Podlaží', [...S.storeys].reverse().map((s) => ({ ...s, label: s.name, ref: s })),
     (it) => { it.ref.visible = !it.ref.visible; S.isolated = null; applyVisibility(); renderModelPanel(); },
@@ -1366,6 +1382,7 @@ function spatialRows(id, cls) {
 async function renderProps() {
   const root = $('#panel-props');
   const token = ++propToken;
+  if (S.cmpSel != null && S.cmp) { ghostPropsView(root); return; }
   if (S.selected == null && S.inspectId == null) {
     root.replaceChildren();
     const empty = el('div', 'props-empty');
@@ -1433,6 +1450,7 @@ async function renderProps() {
       head.appendChild(nb);
     }
     root.appendChild(head);
+    if (rec && S.cmp) { const cs = cmpDiffSection(id); if (cs) root.appendChild(cs); }
 
     const attrs = [];
     for (const k of ['Description', 'ObjectType', 'Tag', 'PredefinedType', 'LongName', 'OverallWidth', 'OverallHeight']) {
@@ -1719,6 +1737,7 @@ function updatePlanMarker() {
   const inside = p.x >= -20 && p.y >= -20 && p.x <= w + 20 && p.y <= h + 20;
   planSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   let html = '';
+  if (plan.shown != null) html += roomLabelsSvg(plan.shown);
   if (typeof geoPlanMarks === 'function') html += geoPlanMarks();
   if (inside) html += `<path d="M${p.x},${p.y} L${a1.x},${a1.y} A${L},${L} 0 0 1 ${a2.x},${a2.y} Z" class="pm-cone"/><circle cx="${p.x}" cy="${p.y}" r="7" class="pm-dot"/>`;
   planSvg.innerHTML = html;
@@ -3058,15 +3077,15 @@ async function bcfExport() {
   await saveFile(`${base}-BCF.bcfzip`, new Blob([data], { type: 'application/octet-stream' }));
 }
 
-async function saveFile(name, blob) {
+async function saveFile(name, blob, mime) {
   // 1) claude.ai artifact: platform save dialog (.bcfzip is not on its list, so .zip)
   if (window.claude?.use) {
     try {
       const dl = await window.claude.use('downloads');
       if (dl) {
-        const zipName = name.replace(/\.bcfzip$/i, '.bcf.zip');
-        await dl.save({ filename: zipName, data: blob });
-        toast('Uloženo jako .zip. Pro import do BIM nástroje přejmenujte příponu na .bcfzip.');
+        const isBcf = /\.bcfzip$/i.test(name);
+        await dl.save({ filename: isBcf ? name.replace(/\.bcfzip$/i, '.bcf.zip') : name, data: blob });
+        toast(isBcf ? 'Uloženo jako .zip. Pro import do BIM nástroje přejmenujte příponu na .bcfzip.' : `Uloženo: ${name}`);
         return;
       }
     } catch (e) {
@@ -3075,7 +3094,7 @@ async function saveFile(name, blob) {
     }
   }
   // 2) iPad / iPhone: share sheet (Uložit do Souborů, Mail, Teams…)
-  const file = new File([blob], name, { type: 'application/octet-stream' });
+  const file = new File([blob], name, { type: mime || blob.type || 'application/octet-stream' });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file], title: name }); return; } catch (e) { if (e?.name === 'AbortError') return; }
   }
@@ -3162,13 +3181,13 @@ $('#bcf-input').addEventListener('change', (e) => { bcfImport(e.target.files[0])
 const app = $('#app');
 function showPanel(name) {
   document.querySelectorAll('.tab').forEach((t) => t.setAttribute('aria-selected', String(t.dataset.tab === name)));
-  $('#panel-model').hidden = name !== 'model';
-  $('#panel-props').hidden = name !== 'props';
-  $('#panel-bcf').hidden = name !== 'bcf';
-  $('#panel-tree').hidden = name !== 'tree';
-  $('#panel-geo').hidden = name !== 'geo';
+  document.querySelectorAll('.panel-body').forEach((p0) => { p0.hidden = p0.id !== `panel-${name}`; });
   if (name === 'geo') renderGeo();
   if (name === 'tree') renderTree(true);
+  if (name === 'search') { renderSearchPanel(); if (!matchMedia('(hover: none)').matches) setTimeout(() => $('#search-q')?.focus(), 30); }
+  if (name === 'cmp') renderCmpPanel();
+  if (name === 'model') renderModelPanel();
+  document.querySelector(`.tab[data-tab="${name}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   app.classList.add('sheet-open');
   $('#btn-sheet').setAttribute('aria-expanded', 'true');
 }
@@ -3237,6 +3256,1477 @@ document.addEventListener('dragstart', (e) => { if (e.target?.closest?.('#app, .
 /* nečekaná chyba: ukázat ji místo tichého zamrznutí (pomůže s laděním na iPadu) */
 window.addEventListener('error', (e) => { try { toast(`Chyba: ${e.message || e.error || 'neznámá'}`, true); } catch (_) { /* ignore */ } });
 window.addEventListener('unhandledrejection', (e) => { try { toast(`Chyba: ${e.reason?.message || e.reason || 'neznámá'}`, true); } catch (_) { /* ignore */ } });
+
+/* =====================================================================
+   INDEX VLASTNOSTÍ – jeden průchod vazbami IFC, sdílí ho hledání,
+   barvení, popisky místností a porovnání verzí.
+   Sady vlastností se ukládají jednou a prvky na ně jen odkazují
+   (typové sady sdílí tisíce prvků), aby index nebral moc paměti.
+   ===================================================================== */
+const ATTR_KEYS = ['Třída', 'Podlaží', 'Name', 'LongName', 'Typ', 'Materiál', 'Tag', 'ObjectType', 'PredefinedType', 'Description', 'GlobalId'];
+const ATTR_LABEL = { Name: 'Název (Name)', LongName: 'Dlouhý název (LongName)', Typ: 'Typ', Materiál: 'Materiál', Tag: 'Tag', ObjectType: 'ObjectType', PredefinedType: 'PredefinedType', Description: 'Popis (Description)', GlobalId: 'GlobalId', Třída: 'Třída IFC', Podlaží: 'Podlaží' };
+const deacc = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const yieldUi = () => new Promise((r) => setTimeout(r, 0));
+const refId = (x) => (x && typeof x === 'object' ? x.value : x);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function rawVal(v) {
+  if (v == null) return null;
+  if (Array.isArray(v)) { const a = v.map(rawVal).filter((x) => x != null && x !== ''); return a.length ? a.map(fmtVal).join(', ') : null; }
+  if (typeof v === 'object') return 'value' in v ? rawVal(v.value) : null;
+  if (v === true || v === 'T' || v === '.T.') return 'Ano';
+  if (v === false || v === 'F' || v === '.F.') return 'Ne';
+  if (v === 'U' || v === '.U.') return null;
+  if (typeof v === 'string') return v.trim();
+  return v;
+}
+function propValue(p) {
+  if (p.NominalValue !== undefined) return rawVal(p.NominalValue);
+  if (p.EnumerationValues) return rawVal(p.EnumerationValues);
+  if (p.ListValues) return rawVal(p.ListValues);
+  if (p.UpperBoundValue || p.LowerBoundValue) {
+    const a = rawVal(p.LowerBoundValue), b = rawVal(p.UpperBoundValue);
+    return a == null && b == null ? null : `${fmtVal(a)} – ${fmtVal(b)}`;
+  }
+  for (const k of Object.keys(QUNIT)) if (p[k] != null) return rawVal(p[k]);
+  return null;
+}
+const fmtVal = (v) => (v == null ? '' : typeof v === 'number' ? nf.format(v) : String(v));
+
+function parseSet(mid, sid, cache, units) {
+  if (cache.has(sid)) return cache.get(sid);
+  let out = { name: '', props: [], map: null, text: '' };
+  try {
+    const ps = S.api.GetLine(mid, sid, true);
+    const name = val(ps?.Name) || 'Bez názvu';
+    const items = ps?.HasProperties || ps?.Quantities || [];
+    const props = [];
+    for (const p of items) {
+      if (!p || typeof p !== 'object') continue;
+      const pn = val(p.Name);
+      if (!pn) continue;
+      if (Array.isArray(p.HasProperties)) { // složená vlastnost
+        for (const q of p.HasProperties) {
+          if (!q || typeof q !== 'object') continue;
+          const v = propValue(q);
+          if (v != null && v !== '') props.push([`${name}.${pn}.${val(q.Name)}`, v]);
+        }
+        continue;
+      }
+      const v = propValue(p);
+      if (v == null || v === '') continue;
+      const key = `${name}.${pn}`;
+      props.push([key, v]);
+      if (ps.Quantities && units && !units.has(key)) {
+        const qk = Object.keys(QUNIT).find((k) => p[k] != null);
+        if (qk) units.set(key, qk === 'LengthValue' ? ` ${unitLabel(S.geo?.pu ?? 1)}` : QUNIT[qk]);
+      }
+    }
+    out = { name, props, map: new Map(props), text: deacc(props.map((x) => fmtVal(x[1])).join(' | ')) };
+  } catch (e) { /* vadná sada */ }
+  cache.set(sid, out);
+  return out;
+}
+function materialNames(mid, mat, cache) {
+  if (mat == null) return '';
+  if (cache.has(mat)) return cache.get(mat);
+  const names = new Set();
+  try {
+    const walk = (o, depth) => {
+      if (!o || typeof o !== 'object' || depth > 7) return;
+      if (Array.isArray(o)) { o.forEach((x) => walk(x, depth + 1)); return; }
+      if (o.type === WebIFC.IFCMATERIAL && o.Name) names.add(val(o.Name));
+      for (const k of Object.keys(o)) if (k !== 'type' && o[k] && typeof o[k] === 'object') walk(o[k], depth + 1);
+    };
+    walk(S.api.GetLine(mid, mat, true), 0);
+  } catch (e) { /* ignore */ }
+  const s = [...names].filter(Boolean).join(', ');
+  cache.set(mat, s);
+  return s;
+}
+
+/* index pro prvky `want` (Set expressID) v modelu `mid` */
+async function buildIndex(mid, want, progress, isAlive) {
+  const api = S.api;
+  const idx = { mid, el: new Map(), units: new Map(), ready: false };
+  const cache = new Map(), mcache = new Map();
+  const get = (id) => {
+    let r = idx.el.get(id);
+    if (!r) { r = { a: Object.create(null), sets: [], tsets: [], atext: null }; idx.el.set(id, r); }
+    return r;
+  };
+  let last = performance.now();
+  const alive = () => { if (!S.api || (isAlive && !isAlive())) throw new Error('aborted'); };
+  const tick = async (k, n, label) => {
+    if (performance.now() - last > 14) { progress?.(label, n ? k / n : 0); await yieldUi(); alive(); last = performance.now(); }
+  };
+  // 1) typy prvků a jejich sady vlastností
+  const typeOf = new Map(), typeInfo = new Map();
+  let v = api.GetLineIDsWithType(mid, WebIFC.IFCRELDEFINESBYTYPE);
+  for (let i = 0, n = v.size(); i < n; i++) {
+    await tick(i, n, 'Typy prvků');
+    let rel; try { rel = api.GetLine(mid, v.get(i), false); } catch (e) { continue; }
+    const tid = refId(rel?.RelatingType);
+    if (tid == null) continue;
+    for (const o of rel.RelatedObjects || []) { const oid = refId(o); if (want.has(oid)) typeOf.set(oid, tid); }
+  }
+  for (const tid of new Set(typeOf.values())) {
+    let t; try { t = api.GetLine(mid, tid, false); } catch (e) { continue; }
+    const sets = [];
+    for (const r of t?.HasPropertySets || []) { const s = parseSet(mid, refId(r), cache, idx.units); if (s.props.length) sets.push(s); }
+    typeInfo.set(tid, { name: val(t?.Name), sets });
+  }
+  // 2) sady vlastností a množství prvků
+  v = api.GetLineIDsWithType(mid, WebIFC.IFCRELDEFINESBYPROPERTIES);
+  for (let i = 0, n = v.size(); i < n; i++) {
+    await tick(i, n, 'Sady vlastností');
+    let rel; try { rel = api.GetLine(mid, v.get(i), false); } catch (e) { continue; }
+    const objs = (rel?.RelatedObjects || []).map(refId).filter((id) => want.has(id));
+    if (!objs.length) continue;
+    let defs = rel.RelatingPropertyDefinition;
+    defs = Array.isArray(defs) ? defs : [defs];
+    for (const d of defs) {
+      const s = parseSet(mid, refId(d), cache, idx.units);
+      if (!s.props.length) continue;
+      for (const o of objs) get(o).sets.push(s);
+    }
+  }
+  // 3) materiály (prvku nebo jeho typu)
+  const matOf = new Map();
+  try {
+    v = api.GetLineIDsWithType(mid, WebIFC.IFCRELASSOCIATESMATERIAL);
+    for (let i = 0, n = v.size(); i < n; i++) {
+      await tick(i, n, 'Materiály');
+      let rel; try { rel = api.GetLine(mid, v.get(i), false); } catch (e) { continue; }
+      const objs = (rel?.RelatedObjects || []).map(refId).filter((id) => want.has(id) || typeInfo.has(id));
+      if (!objs.length) continue;
+      const names = materialNames(mid, refId(rel.RelatingMaterial), mcache);
+      if (names) for (const o of objs) matOf.set(o, names);
+    }
+  } catch (e) { if (e?.message === 'aborted') throw e; }
+  // 4) atributy
+  let k = 0;
+  for (const id of want) {
+    await tick(k++, want.size, 'Atributy');
+    const r = get(id);
+    let L; try { L = api.GetLine(mid, id, false); } catch (e) { continue; }
+    for (const a of ['Name', 'LongName', 'Description', 'ObjectType', 'Tag', 'PredefinedType', 'GlobalId']) {
+      const x = rawVal(L?.[a]);
+      if (x != null && x !== '') r.a[a] = typeof x === 'number' ? fmtVal(x) : x;
+    }
+    const tid = typeOf.get(id);
+    const ti = tid != null ? typeInfo.get(tid) : null;
+    if (ti) { if (ti.name) r.a.Typ = ti.name; r.tsets = ti.sets; }
+    const m = matOf.get(id) ?? (tid != null ? matOf.get(tid) : null);
+    if (m) r.a.Materiál = m;
+  }
+  return idx;
+}
+/* hodnota vlastnosti prvku: atribut, vlastní sada, pak sada typu */
+function getProp(r, key) {
+  if (!r) return null;
+  if (key in r.a) return r.a[key];
+  for (const s of r.sets) if (s.map.has(key)) return s.map.get(key);
+  for (const s of r.tsets) if (s.map.has(key)) return s.map.get(key);
+  return null;
+}
+/* všechny vlastnosti prvku jako text (pro porovnání verzí) */
+function flatProps(r) {
+  const out = new Map();
+  if (!r) return out;
+  for (const s of r.tsets) for (const [k, v] of s.props) out.set(k, fmtVal(v));
+  for (const s of r.sets) for (const [k, v] of s.props) out.set(k, fmtVal(v));
+  for (const k of Object.keys(r.a)) if (k !== 'GlobalId') out.set(k, fmtVal(r.a[k]));
+  return out;
+}
+function keyCatalog(idx) {
+  const keys = new Map();
+  for (const r of idx.el.values()) {
+    const seen = new Set();
+    const add = (key, v) => {
+      if (seen.has(key) || v == null || v === '') return;
+      seen.add(key);
+      let k = keys.get(key);
+      if (!k) { k = { count: 0, nums: 0, values: new Map() }; keys.set(key, k); }
+      k.count++;
+      if (typeof v === 'number') k.nums++;
+      const sv = fmtVal(v);
+      if (k.values.size < 400 || k.values.has(sv)) k.values.set(sv, (k.values.get(sv) || 0) + 1);
+    };
+    for (const a of Object.keys(r.a)) add(a, r.a[a]);
+    for (const s of r.sets) for (const [kk, v] of s.props) add(kk, v);
+    for (const s of r.tsets) for (const [kk, v] of s.props) add(kk, v);
+  }
+  return keys;
+}
+/* seznam klíčů pro výběr: atributy, pak sady (abecedně) */
+function keyGroups() {
+  const keys = S.idx?.keys;
+  if (!keys) return [];
+  const attrs = ATTR_KEYS.filter((k) => keys.has(k)).map((k) => ({ key: k, label: ATTR_LABEL[k] || k, count: keys.get(k).count }));
+  const bySet = new Map();
+  for (const [k, info] of keys) {
+    if (ATTR_KEYS.includes(k)) continue;
+    const dot = k.indexOf('.');
+    const set = k.slice(0, dot), name = k.slice(dot + 1);
+    if (!bySet.has(set)) bySet.set(set, []);
+    bySet.get(set).push({ key: k, label: name, count: info.count });
+  }
+  const coll = new Intl.Collator('cs', { numeric: true });
+  const groups = [{ label: 'Atributy', items: attrs }];
+  [...bySet.keys()].sort(coll.compare).forEach((s) => groups.push({ label: s, items: bySet.get(s).sort((a, b) => coll.compare(a.label, b.label)) }));
+  return groups;
+}
+function keyLabel(key) {
+  if (ATTR_LABEL[key]) return ATTR_LABEL[key];
+  const dot = key.indexOf('.');
+  return dot > 0 ? `${key.slice(dot + 1)} (${key.slice(0, dot)})` : key;
+}
+function fillKeySelect(sel, current, emptyLabel) {
+  sel.replaceChildren();
+  if (emptyLabel) { const o = el('option', null, emptyLabel); o.value = ''; sel.appendChild(o); }
+  for (const g of keyGroups()) {
+    if (!g.items.length) continue;
+    const og = document.createElement('optgroup');
+    og.label = g.label;
+    for (const it of g.items) {
+      const o = el('option', null, `${it.label} (${it.count.toLocaleString('cs-CZ')})`);
+      o.value = it.key;
+      og.appendChild(o);
+    }
+    sel.appendChild(og);
+  }
+  sel.value = current || '';
+}
+
+function ensureIndex() {
+  if (S.modelID == null) return Promise.reject(new Error('Žádný model'));
+  if (S.idx?.ready && S.idx.mid === S.modelID) return Promise.resolve(S.idx);
+  if (S.idxPromise && S.idxFor === S.modelID && S.idxGen === S.modelGen) return S.idxPromise;
+  const mid = S.modelID, gen = S.modelGen;
+  const alive = () => S.modelID === mid && S.modelGen === gen;
+  S.idxFor = mid; S.idxGen = gen; S.idxProgress = 0; S.idxLabel = '';
+  S.idxPromise = (async () => {
+    await yieldUi();
+    if (!alive()) throw new Error('aborted');
+    const idx = await buildIndex(mid, new Set(S.elements.keys()), (label, f) => { S.idxLabel = label; S.idxProgress = f; onIndexProgress(); }, alive);
+    if (!alive()) throw new Error('aborted');
+    const stName = new Map(S.storeys.map((s) => [s.id, s.name]));
+    for (const [id, rec] of S.elements) {
+      let r = idx.el.get(id);
+      if (!r) { r = { a: Object.create(null), sets: [], tsets: [], atext: null }; idx.el.set(id, r); }
+      r.a.Třída = prettyCls(rec.cls);
+      if (rec.storey !== -1 && stName.has(rec.storey)) r.a.Podlaží = stName.get(rec.storey);
+    }
+    idx.keys = keyCatalog(idx);
+    idx.ready = true;
+    S.idx = idx;
+    onIndexReady();
+    return idx;
+  })();
+  S.idxPromise.catch((e) => { if (e?.message !== 'aborted') console.warn('index', e); });
+  return S.idxPromise;
+}
+let idxUiTimer = 0;
+function onIndexProgress() {
+  if (idxUiTimer) return;
+  idxUiTimer = setTimeout(() => {
+    idxUiTimer = 0;
+    const pct = `${Math.round((S.idxProgress || 0) * 100)} %`;
+    document.querySelectorAll('.idx-progress').forEach((n) => { n.textContent = `Připravuji index vlastností: ${S.idxLabel || ''} ${pct}`; });
+  }, 120);
+}
+function onIndexReady() {
+  if (!$('#panel-search').hidden) renderSearchPanel();
+  if (!$('#panel-model').hidden) renderModelPanel();
+  if (plan.on) { S.roomLbl = null; markPlanDirty(0); }
+}
+
+/* =====================================================================
+   VYHLEDÁVÁNÍ A FILTR
+   ===================================================================== */
+const OPS = [
+  ['eq', '='], ['ne', '≠'], ['has', 'obsahuje'], ['start', 'začíná na'],
+  ['gt', '>'], ['lt', '<'], ['set', 'je vyplněno'], ['unset', 'není vyplněno'],
+];
+const numOf = (v) => {
+  if (typeof v === 'number') return v;
+  const m = String(v ?? '').replace(/\s/g, '').replace(',', '.').match(/^[-+]?\d*\.?\d+(e[-+]?\d+)?/i);
+  return m ? Number(m[0]) : NaN;
+};
+function condMatch(c, v) {
+  const empty = v == null || v === '';
+  if (c.op === 'set') return !empty;
+  if (c.op === 'unset') return empty;
+  if (empty) return c.op === 'ne';
+  const a = deacc(fmtVal(v)), b = deacc(c.value);
+  switch (c.op) {
+    case 'eq': { const x = numOf(v), y = numOf(c.value); return (typeof v === 'number' && !isNaN(y)) ? Math.abs(x - y) < 1e-9 : a === b; }
+    case 'ne': { const x = numOf(v), y = numOf(c.value); return (typeof v === 'number' && !isNaN(y)) ? Math.abs(x - y) >= 1e-9 : a !== b; }
+    case 'has': return a.includes(b);
+    case 'start': return a.startsWith(b);
+    case 'gt': { const x = numOf(v), y = numOf(c.value); return !isNaN(x) && !isNaN(y) && x > y; }
+    case 'lt': { const x = numOf(v), y = numOf(c.value); return !isNaN(x) && !isNaN(y) && x < y; }
+    default: return true;
+  }
+}
+function attrText(r, rec) {
+  if (r.atext == null) r.atext = deacc(`${Object.values(r.a).join(' | ')} | ${classLabel(rec.cls)}`);
+  return r.atext;
+}
+function tokenHit(r, rec, t) {
+  if (attrText(r, rec).includes(t)) return true;
+  for (const s of r.sets) if (s.text.includes(t)) return true;
+  for (const s of r.tsets) if (s.text.includes(t)) return true;
+  return false;
+}
+/* krátká ukázka, kde se hledaný text našel */
+function hitSnippet(r, t) {
+  if (!t) return '';
+  for (const k of ['Tag', 'Typ', 'Materiál', 'ObjectType', 'Description', 'GlobalId', 'Podlaží']) {
+    if (r.a[k] && deacc(r.a[k]).includes(t)) return `${ATTR_LABEL[k] || k}: ${r.a[k]}`;
+  }
+  for (const s of [...r.sets, ...r.tsets]) {
+    for (const [k, v] of s.props) if (deacc(fmtVal(v)).includes(t)) return `${k.slice(k.indexOf('.') + 1)}: ${fmtVal(v)}`;
+  }
+  return '';
+}
+function runSearch() {
+  const st = S.search;
+  const tokens = deacc(st.q.trim()).split(/\s+/).filter(Boolean);
+  const conds = st.conds.filter((c) => c.key && (c.op === 'set' || c.op === 'unset' || String(c.value).trim() !== ''));
+  st.active = !!(tokens.length || conds.length);
+  st.results = [];
+  if (!st.active || !S.idx?.ready) return;
+  for (const [id, rec] of S.elements) {
+    const r = S.idx.el.get(id);
+    if (!r) continue;
+    if (tokens.length && !tokens.every((t) => tokenHit(r, rec, t))) continue;
+    if (conds.length && !conds.every((c) => condMatch(c, getProp(r, c.key)))) continue;
+    st.results.push(id);
+  }
+  st.tokens = tokens;
+}
+function revealAndSelect(id) {
+  const rec = S.elements.get(id);
+  if (!rec) return;
+  if (S.hidden.has(id)) S.hidden.delete(id);
+  if (S.isolated && !S.isolated.has(id)) S.isolated = null;
+  const c = S.classes.get(rec.cls);
+  if (c && !c.visible && !S.isolated) c.visible = true;
+  const st = S.storeys.find((s0) => s0.id === rec.storey);
+  if (st && !st.visible && !S.isolated) st.visible = true;
+  applyVisibility();
+  select(id, { keepPanel: true });
+  focusSelected();
+}
+function fitToIds(ids) {
+  const meshes = [];
+  for (const id of ids) { const rec = S.elements.get(id); if (rec) meshes.push(...rec.meshes); }
+  if (!meshes.length) return;
+  const b = boxOf(meshes);
+  const c = b.getCenter(new THREE.Vector3());
+  const r = Math.max(b.getSize(new THREE.Vector3()).length() / 2, 0.5);
+  const fov = THREE.MathUtils.degToRad(camera.fov);
+  const dist = r / Math.sin(Math.min(fov, fov * camera.aspect) / 2) * 1.05;
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  tween(c.clone().add(dir.multiplyScalar(dist)), c, true);
+}
+
+let searchTimer = 0;
+function renderSearchPanel() {
+  const root = $('#panel-search');
+  if (!S.search) S.search = { q: '', conds: [], results: [], limit: 150, active: false, tokens: [] };
+  const st = S.search;
+  root.replaceChildren();
+  if (S.modelID == null) { root.appendChild(el('p', 'muted pad', 'Otevřete IFC soubor tlačítkem nahoře.')); return; }
+  const box = el('div', 'search-box');
+  const inp = el('input', 'search-input');
+  inp.type = 'search'; inp.id = 'search-q'; inp.placeholder = 'Číslo místnosti, název, GlobalId, hodnota…';
+  inp.setAttribute('aria-label', 'Hledat v modelu');
+  inp.autocomplete = 'off'; inp.spellcheck = false;
+  inp.value = st.q;
+  inp.addEventListener('input', () => {
+    st.q = inp.value; st.limit = 150;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { runSearch(); renderSearchResults(); }, 180);
+  });
+  box.appendChild(inp);
+  root.appendChild(box);
+
+  if (!S.idx?.ready) {
+    root.appendChild(el('p', 'muted pad idx-progress', 'Připravuji index vlastností…'));
+    ensureIndex().catch(() => {});
+    return;
+  }
+  // podmínky
+  const fl = el('div', 'flt-list');
+  st.conds.forEach((c, i) => fl.appendChild(condRow(c, i)));
+  root.appendChild(fl);
+  const add = el('button', 'link flt-add', st.conds.length ? '+ Další podmínka' : '+ Filtr podle vlastnosti');
+  add.type = 'button';
+  add.addEventListener('click', () => { st.conds.push({ key: 'Třída', op: 'eq', value: '' }); renderSearchPanel(); });
+  root.appendChild(add);
+  const res = el('div', 'res');
+  res.id = 'search-res';
+  root.appendChild(res);
+  runSearch();
+  renderSearchResults();
+}
+function condRow(c, i) {
+  const st = S.search;
+  const row = el('div', 'flt-row');
+  const ks = el('select', 'flt-key');
+  ks.setAttribute('aria-label', 'Vlastnost');
+  fillKeySelect(ks, c.key);
+  const ops = el('select', 'flt-op');
+  ops.setAttribute('aria-label', 'Podmínka');
+  OPS.forEach(([v, l]) => { const o = el('option', null, l); o.value = v; ops.appendChild(o); });
+  ops.value = c.op;
+  const vi = el('input', 'flt-val');
+  vi.setAttribute('aria-label', 'Hodnota');
+  vi.autocomplete = 'off'; vi.spellcheck = false;
+  vi.value = c.value;
+  vi.placeholder = 'hodnota';
+  const dl = el('datalist');
+  dl.id = `flt-dl-${i}`;
+  vi.setAttribute('list', dl.id);
+  const fillDl = () => {
+    dl.replaceChildren();
+    const info = S.idx.keys.get(c.key);
+    if (!info) return;
+    [...info.values.entries()].sort((a, b) => b[1] - a[1]).slice(0, 200).forEach(([v]) => { const o = el('option'); o.value = v; dl.appendChild(o); });
+  };
+  fillDl();
+  const showVal = () => { vi.hidden = c.op === 'set' || c.op === 'unset'; };
+  showVal();
+  const rerun = () => { st.limit = 150; runSearch(); renderSearchResults(); };
+  ks.addEventListener('change', () => { c.key = ks.value; c.value = ''; vi.value = ''; fillDl(); rerun(); });
+  ops.addEventListener('change', () => { c.op = ops.value; showVal(); rerun(); });
+  vi.addEventListener('input', () => { c.value = vi.value; clearTimeout(searchTimer); searchTimer = setTimeout(rerun, 200); });
+  const rm = el('button', 'ib flt-rm');
+  rm.type = 'button';
+  rm.setAttribute('aria-label', 'Odebrat podmínku');
+  rm.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+  rm.addEventListener('click', () => { st.conds.splice(i, 1); renderSearchPanel(); });
+  const line2 = el('div', 'flt-line');
+  line2.append(ops, vi, rm);
+  row.append(ks, line2, dl);
+  return row;
+}
+function renderSearchResults() {
+  const box = $('#search-res');
+  if (!box) return;
+  const st = S.search;
+  box.replaceChildren();
+  if (!st.active) {
+    const help = el('div', 'search-help');
+    help.append(
+      el('p', null, 'Hledá v názvech, číslech místností, typech, materiálech, GlobalId i v hodnotách všech sad vlastností. Víc slov = musí platit všechna.'),
+      el('p', 'muted', 'Filtrem vyberete prvky podle konkrétní vlastnosti, například FireRating = EI 30 nebo Plocha > 20.'),
+    );
+    box.appendChild(help);
+    return;
+  }
+  const n = st.results.length;
+  const head = el('div', 'res-head');
+  head.appendChild(el('span', 'res-count', n ? `${n.toLocaleString('cs-CZ')} ${n === 1 ? 'prvek' : n < 5 ? 'prvky' : 'prvků'}` : 'Nic nenalezeno'));
+  box.appendChild(head);
+  if (!n) return;
+  const acts = el('div', 'res-acts');
+  const mk = (label, fn, primary) => { const b = el('button', 'sbtn' + (primary ? ' primary' : ''), label); b.type = 'button'; b.addEventListener('click', fn); acts.appendChild(b); return b; };
+  mk('Izolovat', () => { setColorOnly(null, true); S.isolated = new Set(st.results); applyVisibility(); renderModelPanel(); fitToIds(st.results); }, true);
+  mk('Zvýraznit', () => colorBySearch());
+  mk('Skrýt', () => { if (S.selected != null && st.results.includes(S.selected)) deselect(); st.results.forEach((id) => S.hidden.add(id)); if (S.isolated) st.results.forEach((id) => S.isolated.delete(id)); applyVisibility(); renderModelPanel(); });
+  mk('Zrušit', () => { st.q = ''; st.conds = []; if (S.color?.mode === 'search') setColoring(null); showAll(); renderSearchPanel(); });
+  box.appendChild(acts);
+
+  // skupiny podle třídy
+  const groups = new Map();
+  for (const id of st.results) {
+    const rec = S.elements.get(id);
+    const g = classLabel(rec.cls);
+    if (!groups.has(g)) groups.set(g, []);
+    groups.get(g).push(id);
+  }
+  const coll = new Intl.Collator('cs', { numeric: true });
+  const nameOf = (id) => S.idx.el.get(id)?.a.Name || '';
+  let shown = 0;
+  const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  for (const [g, ids] of ordered) {
+    if (shown >= st.limit) break;
+    const sec = el('section', 'res-group');
+    sec.appendChild(el('h3', 'group-title', `${g} · ${ids.length.toLocaleString('cs-CZ')}`));
+    ids.sort((a, b) => coll.compare(nameOf(a), nameOf(b)));
+    for (const id of ids) {
+      if (shown >= st.limit) break;
+      shown++;
+      const r = S.idx.el.get(id);
+      const rec = S.elements.get(id);
+      const b = el('button', 'res-item' + (S.selected === id ? ' on' : ''));
+      b.type = 'button';
+      const nm = r.a.Name || r.a.LongName || prettyCls(rec.cls);
+      const ln = r.a.LongName && r.a.LongName !== nm ? ` – ${r.a.LongName}` : '';
+      b.appendChild(el('span', 'res-name', nm + ln));
+      const sub = [r.a.Podlaží, hitSnippet(r, st.tokens?.[0])].filter(Boolean).join(' · ');
+      if (sub) b.appendChild(el('span', 'res-sub', sub));
+      b.addEventListener('click', () => { revealAndSelect(id); box.querySelectorAll('.res-item.on').forEach((x) => x.classList.remove('on')); b.classList.add('on'); });
+      sec.appendChild(b);
+    }
+    box.appendChild(sec);
+  }
+  if (n > shown) {
+    const more = el('button', 'link more', `Zobrazit další (${(n - shown).toLocaleString('cs-CZ')})`);
+    more.type = 'button';
+    more.addEventListener('click', () => { st.limit += 300; renderSearchResults(); });
+    box.appendChild(more);
+  }
+}
+
+/* =====================================================================
+   BARVENÍ PODLE VLASTNOSTI (+ zvýraznění výsledků a porovnání verzí)
+   S.color = { mode, title, items: [{label, color, ids:Set, ghost}], byId: Map, only }
+   ===================================================================== */
+const CAT_COLORS = {
+  light: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
+  dark: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9', '#e66767'],
+};
+const SEQ_RAMP = ['#cde2fb', '#9ec5f4', '#6da7ec', '#3987e5', '#256abf', '#184f95', '#0d366b'];
+const STATUS = { added: '#0ca30c', changed: '#fab219', removed: '#d03b3b' };
+const OTHER_COLOR = '#9aa19e';
+const colorMatCache = new Map();
+const isDarkTheme = () => { const c = new THREE.Color(cssVar('--panel') || '#f8faf9'); return (c.r + c.g + c.b) / 3 < 0.35; };
+function seqColor(t) { // t 0..1 po rampě (vynechá nejsvětlejší krok, aby barva nesplynula s pozadím)
+  const ramp = SEQ_RAMP.slice(1);
+  const x = Math.min(Math.max(t, 0), 1) * (ramp.length - 1);
+  const i = Math.floor(x), f = x - i;
+  const a = new THREE.Color(ramp[i]), b = new THREE.Color(ramp[Math.min(i + 1, ramp.length - 1)]);
+  return '#' + a.lerp(b, f).getHexString();
+}
+function colorMat(color, space, ghost) {
+  const key = `${color}|${space ? 1 : 0}|${ghost ? 1 : 0}`;
+  let m = colorMatCache.get(key);
+  if (!m) {
+    if (ghost) {
+      m = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide, transparent: true, opacity: space ? 0.04 : 0.09, depthWrite: false });
+    } else {
+      m = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide });
+      if (space) Object.assign(m, { transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
+    }
+    colorMatCache.set(key, m);
+  }
+  return m;
+}
+function ghostColor() { return cssVar('--muted') || '#8a9490'; }
+
+function setColoring(state) {
+  S.color = state;
+  if (state) {
+    state.byId = new Map();
+    state.items.forEach((it, i) => it.ids.forEach((id) => state.byId.set(id, i)));
+    if (state.only == null) state.only = null;
+  }
+  paintModel();
+  renderLegend();
+  if (!$('#panel-model').hidden) renderModelPanel();
+}
+function paintModel() {
+  const st = S.color;
+  const keep = S.selected;
+  if (keep != null) deselect(false);
+  for (const [id, rec] of S.elements) {
+    let mat = null, ghost = false;
+    if (st) {
+      const i = st.byId.get(id);
+      const it = i != null ? st.items[i] : st.rest;
+      if (it) { ghost = !!it.ghost; mat = colorMat(it.ghost ? (it.color || ghostColor()) : it.color, U(rec.cls) === 'IFCSPACE', ghost); }
+    }
+    for (const m of rec.meshes) {
+      if (m.userData.baseMat === undefined) m.userData.baseMat = m.material;
+      m.material = mat || m.userData.baseMat;
+      m.userData.ghost = ghost;
+      for (const c of m.children) if (c.userData.edge) c.visible = S.edges && !ghost;
+    }
+  }
+  if (keep != null && S.elements.has(keep)) select(keep, { keepPanel: true });
+  requestRender();
+  markPlanDirty();
+}
+function refreshColoring() {
+  if (!S.color) return;
+  colorMatCache.forEach((m) => m.dispose());
+  colorMatCache.clear();
+  if (S.color.mode === 'prop') colorByKey(S.color.key, true);
+  else if (S.color.mode === 'search') paintModel();
+  else paintModel();
+  if (S.cmp) cmpGhostMat.color.set(STATUS.removed);
+}
+/* barvení podle vlastnosti */
+function colorByKey(key, keepOnly) {
+  if (!key) { setColoring(null); return; }
+  if (!S.idx?.ready) { ensureIndex().then(() => colorByKey(key)).catch(() => {}); return; }
+  const palette = isDarkTheme() ? CAT_COLORS.dark : CAT_COLORS.light;
+  const groups = new Map(); const missing = new Set();
+  let allNum = true;
+  for (const id of S.elements.keys()) {
+    const v = getProp(S.idx.el.get(id), key);
+    if (v == null || v === '') { missing.add(id); continue; }
+    if (typeof v !== 'number') allNum = false;
+    const k = typeof v === 'number' ? v : fmtVal(v);
+    if (!groups.has(k)) groups.set(k, new Set());
+    groups.get(k).add(id);
+  }
+  const items = [];
+  if (key === 'Podlaží') {
+    // pořadí podle výšky, postupná barva
+    const order = S.storeys.filter((s) => s.id !== -1).map((s) => s.name).filter((n) => groups.has(n));
+    order.forEach((n, i) => items.push({ label: n, color: seqColor(order.length > 1 ? i / (order.length - 1) : 0.5), ids: groups.get(n) }));
+  } else if (allNum && groups.size) {
+    const vals = [...groups.keys()].sort((a, b) => a - b);
+    if (vals.length <= 6) {
+      vals.forEach((v, i) => items.push({ label: fmtVal(v) + (S.idx.units.get(key) || ''), color: seqColor(vals.length > 1 ? i / (vals.length - 1) : 0.5), ids: groups.get(v) }));
+    } else {
+      const lo = vals[0], hi = vals[vals.length - 1], N = 6, step = (hi - lo) / N || 1;
+      const bins = Array.from({ length: N }, () => new Set());
+      for (const [v, ids] of groups) { const b = Math.min(N - 1, Math.floor((v - lo) / step)); ids.forEach((id) => bins[b].add(id)); }
+      const u = S.idx.units.get(key) || '';
+      bins.forEach((ids, b) => { if (ids.size) items.push({ label: `${nf.format(lo + b * step)} – ${nf.format(lo + (b + 1) * step)}${u}`, color: seqColor(b / (N - 1)), ids }); });
+    }
+  } else {
+    const sorted = [...groups.entries()].sort((a, b) => b[1].size - a[1].size);
+    const lab = (v) => (key === 'Třída' && CLASS_LABELS[U(v)] ? `${CLASS_LABELS[U(v)]}` : String(v));
+    sorted.slice(0, 8).forEach(([v, ids], i) => items.push({ label: lab(v), color: palette[i], ids }));
+    if (sorted.length > 8) {
+      const rest = new Set();
+      sorted.slice(8).forEach(([, ids]) => ids.forEach((id) => rest.add(id)));
+      items.push({ label: `Ostatní (${sorted.length - 8} hodnot)`, color: OTHER_COLOR, ids: rest, other: true });
+    }
+  }
+  if (missing.size) items.push({ label: 'Nevyplněno', ghost: true, ids: missing });
+  const prevOnly = keepOnly && S.color?.key === key ? S.color.only : null;
+  setColoring({ mode: 'prop', key, title: keyLabel(key), items, only: prevOnly });
+  if (!keepOnly) showColoredSpaces(items.filter((it) => !it.ghost));
+}
+/* když barvení dopadne na skryté místnosti, zapnout je, jinak by barvy nebyly vidět */
+function showColoredSpaces(items) {
+  const sc = [...S.classes.entries()].find(([k]) => U(k) === 'IFCSPACE');
+  if (!sc || sc[1].visible) return;
+  const hit = items.some((it) => { for (const id of it.ids) if (U(S.elements.get(id)?.cls) === 'IFCSPACE') return true; return false; });
+  if (!hit) return;
+  sc[1].visible = true;
+  applyVisibility();
+  if (!$('#panel-model').hidden) renderModelPanel();
+  toast('Zobrazil jsem místnosti, aby bylo barvení vidět.');
+}
+function colorBySearch() {
+  const ids = new Set(S.search.results);
+  const rest = new Set([...S.elements.keys()].filter((id) => !ids.has(id)));
+  const pal = isDarkTheme() ? CAT_COLORS.dark : CAT_COLORS.light;
+  S.isolated = null;
+  setColoring({ mode: 'search', title: 'Výsledky hledání', items: [{ label: 'Nalezené prvky', color: pal[1], ids }, { label: 'Ostatní prvky', ghost: true, ids: rest }], only: null });
+  applyVisibility();
+  showColoredSpaces([{ ids }]);
+  fitToIds(S.search.results);
+}
+/* legenda: ťuknutí na položku = jen tato skupina */
+function setColorOnly(i, silent) {
+  const st = S.color;
+  if (!st) return;
+  st.only = i;
+  if (i == null) S.isolated = null;
+  else S.isolated = new Set(st.items[i].ids);
+  if (S.cmp) cmpGroup.visible = i == null || st.items[i]?.removed;
+  if (!silent) { applyVisibility(); renderModelPanel(); renderLegend(); }
+}
+function renderLegend() {
+  const box = $('#legend');
+  const st = S.color;
+  if (!st) { box.hidden = true; $('#sample-badge').classList.remove('under-legend'); return; }
+  box.hidden = false;
+  $('#sample-badge').classList.add('under-legend');
+  $('#lg-title').textContent = st.title;
+  const list = $('#lg-list');
+  list.replaceChildren();
+  box.classList.toggle('collapsed', !!S.legendCollapsed);
+  st.items.forEach((it, i) => {
+    const n = it.removed ? it.count : it.ids.size;
+    const b = el('button', 'lg-item');
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(st.only === i));
+    const sw = el('span', 'lg-sw' + (it.ghost ? ' ghost' : ''));
+    if (!it.ghost || it.removed) sw.style.background = it.color;
+    b.append(sw, el('span', 'lg-label', it.label), el('span', 'lg-count', n.toLocaleString('cs-CZ')));
+    b.title = st.only === i ? 'Zobrazit vše' : 'Zobrazit jen tuto skupinu';
+    b.addEventListener('click', () => setColorOnly(st.only === i ? null : i));
+    list.appendChild(b);
+  });
+  $('#lg-hint').textContent = st.only != null ? 'Zobrazena jen jedna skupina. Ťuknutím ji zrušíte.' : 'Ťuknutím zobrazíte jen jednu skupinu.';
+}
+$('#lg-close').addEventListener('click', () => {
+  if (S.color?.mode === 'cmp') { S.legendCollapsed = true; renderLegend(); return; }
+  if (S.color?.only != null) S.isolated = null;
+  setColoring(null);
+  applyVisibility();
+});
+$('#lg-collapse').addEventListener('click', () => { S.legendCollapsed = !S.legendCollapsed; renderLegend(); });
+$('#lg-title').addEventListener('click', () => { if (S.legendCollapsed) { S.legendCollapsed = false; renderLegend(); } });
+function colorSection() {
+  const sec = el('section', 'group color-sec');
+  sec.appendChild(el('h3', 'group-title', 'Barvení podle vlastnosti'));
+  const wrap = el('div', 'color-row');
+  const sel = el('select', 'color-key');
+  sel.setAttribute('aria-label', 'Obarvit model podle vlastnosti');
+  if (!S.idx?.ready) {
+    const o = el('option', null, 'Připravuji vlastnosti…'); sel.appendChild(o); sel.disabled = true;
+    wrap.appendChild(sel);
+    sec.append(wrap, el('p', 'muted small pad-x idx-progress', ''));
+    ensureIndex().catch(() => {});
+    return sec;
+  }
+  fillKeySelect(sel, S.color?.mode === 'prop' ? S.color.key : '', 'Bez barvení');
+  sel.addEventListener('change', () => { if (S.color?.only != null) S.isolated = null; colorByKey(sel.value); applyVisibility(); });
+  wrap.appendChild(sel);
+  sec.appendChild(wrap);
+  if (!S.color) {
+    const quick = el('div', 'chips color-quick');
+    const keys = S.idx.keys;
+    const cands = ['Podlaží', 'Třída', 'Materiál', 'Typ'];
+    for (const k of [...keys.keys()]) if (/\.(Ucel|Účel|Usage|Category|Kategorie|FireRating|IsExternal)$/i.test(k) && cands.length < 7) cands.push(k);
+    cands.filter((k) => keys.has(k)).forEach((k) => {
+      const b = el('button', 'chip', keyLabel(k).replace(/ \(.*\)$/, ''));
+      b.type = 'button';
+      b.addEventListener('click', () => colorByKey(k));
+      quick.appendChild(b);
+    });
+    sec.appendChild(quick);
+  }
+  return sec;
+}
+
+/* =====================================================================
+   POPISKY MÍSTNOSTÍ V PŮDORYSU
+   ===================================================================== */
+const LABEL_KEY = 'ifc-nahled-room-labels';
+let roomLabelMode = 'full';
+try { roomLabelMode = localStorage.getItem(LABEL_KEY) || 'full'; } catch (e) { /* ignore */ }
+const AREA_KEYS = [/^Qto_SpaceBaseQuantities\.NetFloorArea$/i, /^Qto_SpaceBaseQuantities\.GrossFloorArea$/i, /\.NetFloorArea$/i, /\.GrossFloorArea$/i, /^Pset_SpaceCommon\.NetPlannedArea$/i, /\.(Plocha|PlochaMistnosti|Plocha_m2|Area)$/i];
+/* půdorysná stopa místnosti z geometrie: plocha a těžiště spodních ploch */
+function spaceFootprint(id) {
+  if (!S.spaceGeo) S.spaceGeo = new Map();
+  if (S.spaceGeo.has(id)) return S.spaceGeo.get(id);
+  const rec = S.elements.get(id);
+  let A = 0, cx = 0, cz = 0, ymin = Infinity;
+  const pts = [];
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), ab = new THREE.Vector3(), ac = new THREE.Vector3();
+  for (const m of rec?.meshes || []) {
+    const pos = m.geometry.attributes.position, ix = m.geometry.index;
+    if (!pos || !ix) continue;
+    const arr = ix.array;
+    for (let i = 0; i < arr.length; i += 3) {
+      a.fromBufferAttribute(pos, arr[i]).applyMatrix4(m.matrixWorld);
+      b.fromBufferAttribute(pos, arr[i + 1]).applyMatrix4(m.matrixWorld);
+      c.fromBufferAttribute(pos, arr[i + 2]).applyMatrix4(m.matrixWorld);
+      ab.subVectors(b, a); ac.subVectors(c, a);
+      const n = ab.cross(ac);
+      const len = n.length();
+      if (len < 1e-12 || n.y / len > -0.7) continue; // jen plochy natočené dolů = podlaha místnosti
+      const area = Math.abs(n.y) / 2;
+      A += area;
+      cx += area * (a.x + b.x + c.x) / 3;
+      cz += area * (a.z + b.z + c.z) / 3;
+      ymin = Math.min(ymin, a.y, b.y, c.y);
+      pts.push(a.x, a.z, b.x, b.z, c.x, c.z);
+    }
+  }
+  let out = null;
+  if (A > 1e-6) out = { area: A, x: cx / A, z: cz / A, y: ymin, pts };
+  else if (rec) { const bx = boxOf(rec.meshes); if (!bx.isEmpty()) { const ctr = bx.getCenter(new THREE.Vector3()); out = { area: 0, x: ctr.x, z: ctr.z, y: bx.min.y, pts: [bx.min.x, bx.min.z, bx.max.x, bx.max.z] }; } }
+  S.spaceGeo.set(id, out);
+  return out;
+}
+function spaceArea(id, fp) {
+  const r = S.idx?.ready ? S.idx.el.get(id) : null;
+  if (r) {
+    const all = [...r.sets, ...r.tsets];
+    for (const re of AREA_KEYS) {
+      for (const s of all) for (const [k, v] of s.props) if (re.test(k) && typeof v === 'number' && v > 0) return { v, src: k };
+    }
+  }
+  return fp?.area ? { v: fp.area, src: 'geometrie' } : null;
+}
+function roomLabelsFor(stId) {
+  if (S.roomLbl?.st === stId && S.roomLbl.idxReady === !!S.idx?.ready) return S.roomLbl.list;
+  const list = [];
+  for (const id of spacesIn(stId)) {
+    if (!S.elements.has(id)) continue;
+    const fp = spaceFootprint(id);
+    if (!fp) continue;
+    let name = '', ln = '';
+    try { const L = S.api.GetLine(S.modelID, id); name = val(L?.Name); ln = val(L?.LongName); } catch (e) { /* ignore */ }
+    const ar = spaceArea(id, fp);
+    list.push({ id, x: fp.x, z: fp.z, pts: fp.pts, num: name, name: ln && ln !== name ? ln : '', area: ar?.v || 0 });
+  }
+  S.roomLbl = { st: stId, list, idxReady: !!S.idx?.ready };
+  return list;
+}
+/* rozmístění popisků v pixelech půdorysu; popisek se ukáže, jen když se do místnosti vejde */
+function layoutRoomLabels(stId) {
+  if (roomLabelMode === 'off' || !plan.view || stId == null) return [];
+  const A = planAxes(), ppm = plan.view.ppm;
+  const axKey = `${A.ux.toFixed(5)},${A.uz.toFixed(5)}`;
+  const PS = planSize();
+  const out = [];
+  for (const L of roomLabelsFor(stId)) {
+    if (L.axKey !== axKey) {
+      let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+      for (let i = 0; i < L.pts.length; i += 2) {
+        const r = L.pts[i] * A.rx + L.pts[i + 1] * A.rz, u = L.pts[i] * A.ux + L.pts[i + 1] * A.uz;
+        if (r < a0) a0 = r; if (r > a1) a1 = r; if (u < b0) b0 = u; if (u > b1) b1 = u;
+      }
+      L.axKey = axKey; L.ext = [a0, a1, b0, b1];
+    }
+    const [r0, r1, u0, u1] = L.ext;
+    const wpx = (r1 - r0) * ppm, hpx = (u1 - u0) * ppm;
+    const p = planXY(L.x, L.z);
+    if (p.x < -80 || p.y < -40 || p.x > PS.w + 80 || p.y > PS.h + 40) continue;
+    const lines = [];
+    const num = L.num || '';
+    if (num) lines.push({ t: num, c: 'rl-num' });
+    if ((roomLabelMode === 'name' || roomLabelMode === 'full') && L.name) lines.push({ t: L.name, c: 'rl-name' });
+    if (roomLabelMode === 'full' && L.area) lines.push({ t: `${nf2.format(L.area)} m²`, c: 'rl-area' });
+    if (!lines.length) continue;
+    const fits = (ls) => ls.length * 14 + 2 <= hpx && Math.max(...ls.map((x) => x.t.length * (x.c === 'rl-num' ? 7.2 : 6.4))) + 6 <= wpx;
+    let use = lines;
+    if (!fits(use)) use = lines.filter((x) => x.c !== 'rl-name');
+    if (!fits(use)) use = lines.slice(0, 1);
+    if (!fits(use)) {
+      // aspoň zkrácené číslo, když je místnost dost velká na pár znaků
+      if (num && wpx > 24 && hpx > 14) use = [{ t: num.length * 7.2 + 6 > wpx ? num.slice(0, Math.max(2, Math.floor((wpx - 6) / 7.2) - 1)) + '…' : num, c: 'rl-num' }];
+      else continue;
+    }
+    out.push({ x: p.x, y: p.y, lines: use });
+  }
+  return out;
+}
+function roomLabelsSvg(stId) {
+  let h = '';
+  for (const L of layoutRoomLabels(stId)) {
+    const y0 = L.y - (L.lines.length - 1) * 7 + 4;
+    h += `<text class="rl" x="${L.x.toFixed(1)}" y="${y0.toFixed(1)}" text-anchor="middle">`;
+    L.lines.forEach((ln, i) => { h += `<tspan class="${ln.c}" x="${L.x.toFixed(1)}" y="${(y0 + i * 14).toFixed(1)}">${esc(ln.t)}</tspan>`; });
+    h += '</text>';
+  }
+  return h;
+}
+const planLabelsSel = $('#plan-labels');
+planLabelsSel.value = roomLabelMode;
+planLabelsSel.addEventListener('change', () => {
+  roomLabelMode = planLabelsSel.value;
+  try { localStorage.setItem(LABEL_KEY, roomLabelMode); } catch (e) { /* ignore */ }
+  updatePlanMarker();
+});
+function updatePlanLabelUi() {
+  const has = [...S.classes.keys()].some((k) => U(k) === 'IFCSPACE');
+  planLabelsSel.hidden = !has;
+}
+/* export půdorysu do PNG: obrázek, popisky, měřítko, sever a hlavička */
+async function exportPlanPng() {
+  const f = planStorey();
+  if (!f || !plan.view) return;
+  renderPlanImage(f);
+  const { w, h } = planSize();
+  const k = 2, head = 52;
+  // půdorys znovu ve dvojnásobném rozlišení
+  const W2 = Math.round(w * k), H2 = Math.round(h * k);
+  const rt = new THREE.WebGLRenderTarget(W2, H2, { samples: 4 });
+  rt.texture.colorSpace = THREE.SRGBColorSpace;
+  const prevBg = scene.background;
+  scene.background = new THREE.Color(cssVar('--panel') || '#f8faf9');
+  planCutPlane.constant = f.cut;
+  renderer.setRenderTarget(rt);
+  renderer.clippingPlanes = [planCutPlane];
+  renderer.clear();
+  renderer.render(scene, plan.cam);
+  renderer.setRenderTarget(null);
+  renderer.clippingPlanes = [];
+  scene.background = prevBg;
+  const px = new Uint8Array(W2 * H2 * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, W2, H2, px);
+  rt.dispose();
+  const pc = document.createElement('canvas');
+  pc.width = W2; pc.height = H2;
+  const pimg = pc.getContext('2d').createImageData(W2, H2);
+  for (let y = 0; y < H2; y++) pimg.data.set(px.subarray((H2 - 1 - y) * W2 * 4, (H2 - y) * W2 * 4), y * W2 * 4);
+  pc.getContext('2d').putImageData(pimg, 0, 0);
+  requestRender();
+  const c = document.createElement('canvas');
+  c.width = Math.round(w * k); c.height = Math.round((h + head) * k);
+  const g = c.getContext('2d');
+  g.scale(k, k);
+  g.fillStyle = cssVar('--panel') || '#ffffff';
+  g.fillRect(0, 0, w, h + head);
+  g.drawImage(pc, 0, head, w, h);
+  const ink = cssVar('--ink') || '#18211f', muted = cssVar('--muted') || '#5b6864', bg = cssVar('--panel') || '#ffffff';
+  const sans = '"IBM Plex Sans", system-ui, -apple-system, sans-serif';
+  g.fillStyle = ink; g.font = `600 16px ${sans}`;
+  g.fillText(`${f.st.name} – půdorys`, 14, 22);
+  g.fillStyle = muted; g.font = `12px ${sans}`;
+  const today = new Date().toLocaleDateString('cs-CZ');
+  g.fillText(`${S.meta?.projectName || S.fileName} · ${S.fileName} · ${today}`, 14, 40);
+  g.strokeStyle = cssVar('--line') || '#ccd4d0'; g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, head - 0.5); g.lineTo(w, head - 0.5); g.stroke();
+  // popisky
+  g.textAlign = 'center'; g.lineJoin = 'round';
+  for (const L of layoutRoomLabels(f.st.id)) {
+    const y0 = head + L.y - (L.lines.length - 1) * 7 + 4;
+    L.lines.forEach((ln, i) => {
+      g.font = ln.c === 'rl-num' ? `600 12.5px ${sans}` : `${ln.c === 'rl-area' ? 400 : 500} 11.5px ${sans}`;
+      g.lineWidth = 3; g.strokeStyle = bg; g.strokeText(ln.t, L.x, y0 + i * 14);
+      g.fillStyle = ln.c === 'rl-area' ? muted : ink; g.fillText(ln.t, L.x, y0 + i * 14);
+    });
+  }
+  // měřítko
+  const ppm = plan.view.ppm;
+  const steps = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+  const Lm = steps.find((m) => m * ppm >= 80) || steps[steps.length - 1];
+  const sx = 14, sy = head + h - 16;
+  g.strokeStyle = ink; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(sx, sy - 6); g.lineTo(sx, sy); g.lineTo(sx + Lm * ppm, sy); g.lineTo(sx + Lm * ppm, sy - 6); g.stroke();
+  g.textAlign = 'left'; g.fillStyle = ink; g.font = `500 11px ${sans}`;
+  g.fillText(`${Lm} m`, sx + Lm * ppm + 6, sy);
+  // sever
+  const A = planAxes();
+  const n = (typeof geoNorthScene === 'function' && geoNorthScene()) || { x: 0, z: -1 };
+  const ang = Math.atan2(n.x * A.rx + n.z * A.rz, n.x * A.ux + n.z * A.uz);
+  g.save(); g.translate(w - 26, 26); g.rotate(ang);
+  g.fillStyle = cssVar('--accent') || '#c94a10';
+  g.beginPath(); g.moveTo(0, -12); g.lineTo(7, 9); g.lineTo(0, 5); g.lineTo(-7, 9); g.closePath(); g.fill();
+  g.restore();
+  g.fillStyle = muted; g.font = `600 10px ${sans}`; g.textAlign = 'right';
+  g.fillText(S.geo?.ok ? 'sever mapy' : 'sever projektu', w - 42, 30);
+  if (S.color) {
+    // legenda barvení
+    g.textAlign = 'left';
+    let y = head + 14;
+    g.font = `600 11.5px ${sans}`; g.fillStyle = ink;
+    g.fillText(S.color.title, w - 190, y); y += 6;
+    for (const it of S.color.items.slice(0, 12)) {
+      y += 16;
+      g.fillStyle = it.ghost ? bg : it.color;
+      g.fillRect(w - 190, y - 9, 10, 10);
+      g.strokeStyle = muted; g.lineWidth = 0.5; g.strokeRect(w - 190, y - 9, 10, 10);
+      g.fillStyle = ink; g.font = `11px ${sans}`;
+      g.fillText(String(it.label).slice(0, 28), w - 174, y);
+    }
+  }
+  const blob = await new Promise((res) => c.toBlob(res, 'image/png'));
+  const base = (S.meta?.projectName || S.fileName || 'model').replace(/\.ifc$/i, '').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
+  await saveFile(`${base}-${String(f.st.name).replace(/[\\/:*?"<>|]+/g, '_')}-pudorys.png`, blob, 'image/png');
+}
+$('#plan-save').addEventListener('click', () => exportPlanPng().catch((e) => toast(`Obrázek se nepodařilo uložit: ${e?.message || e}`, true)));
+
+/* =====================================================================
+   POROVNÁNÍ DVOU VERZÍ MODELU
+   Ze starší verze se uloží jen otisk prvků (vlastnosti, obálka, plocha
+   povrchu) a geometrie odebraných prvků. Páruje se podle GlobalId.
+   ===================================================================== */
+const cmpGroup = new THREE.Group();
+scene.add(cmpGroup);
+const cmpGhostMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(STATUS.removed), side: THREE.DoubleSide, transparent: true, opacity: 0.38, depthWrite: false });
+const cmpGhostSelMat = new THREE.MeshLambertMaterial({ color: new THREE.Color(STATUS.removed), side: THREE.DoubleSide, transparent: true, opacity: 0.85 });
+const geoStatCache = new WeakMap();
+function geoStats(geo) {
+  let s = geoStatCache.get(geo);
+  if (s) return s;
+  const pos = geo.attributes.position, ix = geo.index?.array;
+  let area = 0;
+  if (pos && ix) {
+    const arr = pos.data ? pos.data.array : pos.array, stride = pos.data ? pos.data.stride : 3, off = pos.offset || 0;
+    for (let i = 0; i < ix.length; i += 3) {
+      const a = ix[i] * stride + off, b = ix[i + 1] * stride + off, c = ix[i + 2] * stride + off;
+      const ux = arr[b] - arr[a], uy = arr[b + 1] - arr[a + 1], uz = arr[b + 2] - arr[a + 2];
+      const vx = arr[c] - arr[a], vy = arr[c + 1] - arr[a + 1], vz = arr[c + 2] - arr[a + 2];
+      const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+      area += Math.sqrt(cx * cx + cy * cy + cz * cz) / 2;
+    }
+  }
+  if (!geo.boundingBox) geo.computeBoundingBox();
+  s = { area, box: geo.boundingBox.clone() };
+  geoStatCache.set(geo, s);
+  return s;
+}
+function statsFromArrays(v, idx) {
+  let area = 0;
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < v.length; i += 6) {
+    const x = v[i], y = v[i + 1], z = v[i + 2];
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  const box = v.length ? new THREE.Box3(new THREE.Vector3(x0, y0, z0), new THREE.Vector3(x1, y1, z1)) : new THREE.Box3();
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i] * 6, b = idx[i + 1] * 6, c = idx[i + 2] * 6;
+    const ux = v[b] - v[a], uy = v[b + 1] - v[a + 1], uz = v[b + 2] - v[a + 2];
+    const vx = v[c] - v[a], vy = v[c + 1] - v[a + 1], vz = v[c + 2] - v[a + 2];
+    const cx = uy * vz - uz * vy, cy = uz * vx - ux * vz, cz = ux * vy - uy * vx;
+    area += Math.sqrt(cx * cx + cy * cy + cz * cz) / 2;
+  }
+  return { area, box };
+}
+const fmtSize = (b) => { const s = b.getSize(new THREE.Vector3()); return `${nf2.format(s.x)} × ${nf2.format(s.z)} × ${nf2.format(s.y)}`; };
+function geomDiff(a, b) {
+  const tol = 0.005;
+  const dMin = a.box.min.distanceTo(b.box.min), dMax = a.box.max.distanceTo(b.box.max);
+  if (dMin > tol || dMax > tol) {
+    const sa = a.box.getSize(new THREE.Vector3()), sb = b.box.getSize(new THREE.Vector3());
+    if (Math.abs(sa.x - sb.x) <= tol && Math.abs(sa.y - sb.y) <= tol && Math.abs(sa.z - sb.z) <= tol) {
+      const ca = a.box.getCenter(new THREE.Vector3()), cb = b.box.getCenter(new THREE.Vector3());
+      const d = ca.distanceTo(cb);
+      const dz = cb.y - ca.y;
+      return { kind: 'posun', text: `Posun o ${nf3.format(d)} m${Math.abs(dz) > tol ? ` (výškově ${dz > 0 ? '+' : ''}${nf3.format(dz)} m)` : ''}` };
+    }
+    return { kind: 'rozmer', text: `Rozměry ${fmtSize(a.box)} → ${fmtSize(b.box)} m` };
+  }
+  const m = Math.max(a.area, b.area);
+  if (Math.abs(a.area - b.area) > Math.max(0.01, m * 0.005)) return { kind: 'tvar', text: `Změna tvaru (povrch ${nf2.format(a.area)} → ${nf2.format(b.area)} m²)` };
+  return null;
+}
+
+async function compareWith(file) {
+  if (!file || S.modelID == null) return;
+  const head = await file.slice(0, 64).text();
+  if (!/ISO-10303-21/.test(head)) { toast('Tohle nevypadá jako IFC soubor (STEP).', true); return; }
+  exitCompare(true);
+  showLoading(`Porovnávám s ${file.name}`);
+  const api = S.api;
+  let oldMid = null;
+  try {
+    setLoadingStep('Čtu vlastnosti aktuální verze…');
+    await nextFrame();
+    await ensureIndex();
+    // otisk aktuální verze
+    const gmap = guidMap();
+    const newStat = new Map();
+    for (const [id, rec] of S.elements) {
+      const box = boxOf(rec.meshes);
+      let area = 0;
+      for (const m of rec.meshes) area += geoStats(m.geometry).area;
+      newStat.set(id, { box, area });
+    }
+    setLoadingStep('Otevírám starší verzi…');
+    await nextFrame();
+    const buf = await file.arrayBuffer();
+    oldMid = api.OpenModel(new Uint8Array(buf), { COORDINATE_TO_ORIGIN: true });
+    if (oldMid < 0) throw new Error('Starší verzi se nepodařilo otevřít.');
+    S.cmpOldMid = oldMid;
+    // geometrie starší verze
+    setLoadingStep('Čtu geometrii starší verze…');
+    await nextFrame();
+    const guidOld = new Map();
+    const gOf = (id) => {
+      if (guidOld.has(id)) return guidOld.get(id);
+      let g = ''; try { g = api.GetLine(oldMid, id, false)?.GlobalId?.value || ''; } catch (e) { /* ignore */ }
+      guidOld.set(id, g);
+      return g;
+    };
+    const oldStat = new Map();
+    const statCache = new Map(), geoCacheOld = new Map();
+    const ghostParts = new Map(); // oldId -> [{gid, matrix}]
+    const onMesh = (flat) => {
+      const id = flat.expressID;
+      const g = gOf(id);
+      const removedCand = !g || !gmap.has(g);
+      let st = oldStat.get(id);
+      if (!st) { st = { box: new THREE.Box3(), area: 0 }; oldStat.set(id, st); }
+      const pgs = flat.geometries;
+      for (let i = 0; i < pgs.size(); i++) {
+        const pg = pgs.get(i);
+        const gid = pg.geometryExpressID;
+        let s = statCache.get(gid);
+        if (!s || (removedCand && !geoCacheOld.has(gid))) {
+          const geom = api.GetGeometry(oldMid, gid);
+          const v = api.GetVertexArray(geom.GetVertexData(), geom.GetVertexDataSize());
+          const ix = api.GetIndexArray(geom.GetIndexData(), geom.GetIndexDataSize());
+          geom.delete();
+          if (!s) { s = ix.length ? statsFromArrays(v, ix) : { area: 0, box: new THREE.Box3() }; statCache.set(gid, s); }
+          if (removedCand && ix.length) {
+            const ib = new THREE.InterleavedBuffer(new Float32Array(v), 6);
+            const bg = new THREE.BufferGeometry();
+            bg.setAttribute('position', new THREE.InterleavedBufferAttribute(ib, 3, 0));
+            bg.setAttribute('normal', new THREE.InterleavedBufferAttribute(ib, 3, 3));
+            bg.setIndex(new THREE.BufferAttribute(new Uint32Array(ix), 1));
+            bg.computeBoundingSphere();
+            geoCacheOld.set(gid, bg);
+          }
+        }
+        const W = new THREE.Matrix4().fromArray(pg.flatTransformation); // zatím v souřadnicích starší verze
+        if (!s.box.isEmpty()) st.box.union(s.box.clone().applyMatrix4(W));
+        st.area += s.area;
+        if (removedCand) { if (!ghostParts.has(id)) ghostParts.set(id, []); ghostParts.get(id).push({ gid, W }); }
+      }
+    };
+    api.StreamAllMeshes(oldMid, onMesh);
+    try { api.StreamAllMeshesWithTypes(oldMid, [WebIFC.IFCSPACE], onMesh); } catch (e) { /* ignore */ }
+    // posun do počátku (COORDINATE_TO_ORIGIN) web-ifc určí až při čtení geometrie, proto matici čteme teprve teď
+    const oldCoord = (() => { try { return new THREE.Matrix4().fromArray(api.GetCoordinationMatrix(oldMid)); } catch (e) { return new THREE.Matrix4(); } })();
+    const M = new THREE.Matrix4().multiplyMatrices(S.coordMatrix || new THREE.Matrix4(), oldCoord.clone().invert());
+    for (const st of oldStat.values()) if (!st.box.isEmpty()) st.box.applyMatrix4(M);
+    for (const parts of ghostParts.values()) for (const part of parts) part.W.premultiply(M);
+    // třídy a podlaží starší verze
+    setLoadingStep('Čtu strukturu starší verze…');
+    await nextFrame();
+    const oldCls = new Map();
+    for (const id of oldStat.keys()) { try { oldCls.set(id, api.GetNameFromTypeCode(api.GetLineType(oldMid, id))); } catch (e) { oldCls.set(id, ''); } }
+    const oldStorey = new Map();
+    try {
+      const tree = await api.properties.getSpatialStructure(oldMid, false);
+      const walk = (node, sname) => {
+        let s = sname;
+        if (U(node.type) === 'IFCBUILDINGSTOREY') { try { const L = api.GetLine(oldMid, node.expressID); s = L?.Name?.value || L?.LongName?.value || s; } catch (e) { /* ignore */ } }
+        if (oldStat.has(node.expressID) && s) oldStorey.set(node.expressID, s);
+        (node.children || []).forEach((c) => walk(c, s));
+      };
+      walk(tree, null);
+    } catch (e) { /* ignore */ }
+    setLoadingStep('Čtu vlastnosti starší verze…');
+    const gen = S.modelGen;
+    const oldIdx = await buildIndex(oldMid, new Set(oldStat.keys()), (label, f) => setLoadingStep(`Vlastnosti starší verze: ${label} ${Math.round(f * 100)} %`), () => S.modelGen === gen && S.cmpOldMid === oldMid);
+    for (const id of oldStat.keys()) {
+      const r = oldIdx.el.get(id) || (oldIdx.el.set(id, { a: Object.create(null), sets: [], tsets: [] }), oldIdx.el.get(id));
+      r.a.Třída = prettyCls(oldCls.get(id) || '');
+      if (oldStorey.has(id)) r.a.Podlaží = oldStorey.get(id);
+    }
+    // párování
+    setLoadingStep('Porovnávám prvky…');
+    await nextFrame();
+    const pairs = new Map(); // newId -> oldId
+    const oldUsed = new Set();
+    for (const oid of oldStat.keys()) {
+      const g = gOf(oid);
+      const nid = g ? gmap.get(g) : undefined;
+      if (nid != null && !pairs.has(nid)) { pairs.set(nid, oid); oldUsed.add(oid); }
+    }
+    let fallback = 0;
+    const unNew = [...S.elements.keys()].filter((id) => !pairs.has(id));
+    const unOld = [...oldStat.keys()].filter((id) => !oldUsed.has(id));
+    if (unNew.length && unOld.length && pairs.size < 0.5 * Math.min(S.elements.size, oldStat.size)) {
+      // GlobalId se mezi verzemi zřejmě změnilo: náhradní párování podle třídy, Tagu nebo názvu a polohy
+      const keyOf = (r, st) => {
+        if (!r) return '';
+        if (r.a.Tag) return `${r.a.Třída}|T|${r.a.Tag}`;
+        const c = st.box.getCenter(new THREE.Vector3());
+        return `${r.a.Třída}|N|${r.a.Name || ''}|${Math.round(c.x * 5)}|${Math.round(c.y * 5)}|${Math.round(c.z * 5)}`;
+      };
+      const mapN = new Map(), mapO = new Map();
+      const push = (m, k, id) => { if (!k) return; if (!m.has(k)) m.set(k, []); m.get(k).push(id); };
+      unNew.forEach((id) => push(mapN, keyOf(S.idx.el.get(id), newStat.get(id)), id));
+      unOld.forEach((id) => push(mapO, keyOf(oldIdx.el.get(id), oldStat.get(id)), id));
+      for (const [k, ns] of mapN) {
+        const os = mapO.get(k);
+        if (ns.length === 1 && os?.length === 1) { pairs.set(ns[0], os[0]); oldUsed.add(os[0]); fallback++; }
+      }
+    }
+    // rozdíly
+    const items = new Map();
+    let nAdded = 0, nChanged = 0, nSame = 0;
+    for (const id of S.elements.keys()) {
+      const oid = pairs.get(id);
+      if (oid == null) { items.set(id, { status: 'added' }); nAdded++; continue; }
+      const a = flatProps(oldIdx.el.get(oid)), b = flatProps(S.idx.el.get(id));
+      const diffs = [];
+      for (const k of new Set([...a.keys(), ...b.keys()])) {
+        const x = a.get(k) ?? '', y = b.get(k) ?? '';
+        if (x !== y) diffs.push({ k, a: x, b: y });
+      }
+      diffs.sort((p, q) => (ATTR_KEYS.includes(q.k) - ATTR_KEYS.includes(p.k)) || p.k.localeCompare(q.k, 'cs'));
+      const geom = geomDiff(oldStat.get(oid), newStat.get(id));
+      if (diffs.length || geom) { items.set(id, { status: 'changed', diffs, geom, oid }); nChanged++; } else { items.set(id, { status: 'same' }); nSame++; }
+    }
+    // odebrané prvky + jejich „duchové“
+    const removed = [];
+    for (const oid of oldStat.keys()) {
+      if (oldUsed.has(oid)) continue;
+      const r = oldIdx.el.get(oid);
+      const meshes = [];
+      for (const part of ghostParts.get(oid) || []) {
+        const bg = geoCacheOld.get(part.gid);
+        if (!bg) continue;
+        const mesh = new THREE.Mesh(bg, cmpGhostMat);
+        mesh.matrixAutoUpdate = false;
+        mesh.matrix.copy(part.W);
+        mesh.matrixWorldNeedsUpdate = true;
+        mesh.renderOrder = 3;
+        mesh.userData.ghost = removed.length;
+        meshes.push(mesh);
+        cmpGroup.add(mesh);
+      }
+      removed.push({ guid: gOf(oid), cls: r?.a.Třída || prettyCls(oldCls.get(oid) || ''), name: r?.a.Name || '', storey: r?.a.Podlaží || '', props: flatProps(r), box: oldStat.get(oid).box, meshes });
+    }
+    cmpGroup.updateMatrixWorld(true);
+    // nepoužité geometrie uvolnit
+    const used = new Set(); cmpGroup.traverse((o) => { if (o.geometry) used.add(o.geometry); });
+    geoCacheOld.forEach((g) => { if (!used.has(g)) g.dispose(); });
+
+    S.cmp = { oldName: file.name, items, removed, fallback, counts: { added: nAdded, changed: nChanged, same: nSame, removed: removed.length }, filter: 'changed', kind: 'all', limit: 200 };
+    S.cmpGhosts = cmpGroup.children.slice();
+    try { api.CloseModel(oldMid); } catch (e) { /* ignore */ }
+    oldMid = null; S.cmpOldMid = null;
+    hideLoading();
+    applyCompareColors();
+    $('#tab-cmp').hidden = false;
+    showPanel('cmp');
+    const c = S.cmp.counts;
+    toast(`Porovnáno: +${c.added}  ~${c.changed}  −${c.removed}`);
+  } catch (e) {
+    console.error(e);
+    if (oldMid != null) { try { api.CloseModel(oldMid); } catch (_) { /* ignore */ } }
+    S.cmpOldMid = null;
+    cmpGroup.clear();
+    hideLoading();
+    toast(e?.message === 'aborted' ? 'Porovnání přerušeno.' : `Porovnání se nepodařilo: ${e?.message || e}`, true);
+  }
+}
+function applyCompareColors() {
+  const cmp = S.cmp;
+  if (!cmp) return;
+  const ids = { added: new Set(), changed: new Set(), same: new Set() };
+  for (const [id, it] of cmp.items) {
+    if (it.status === 'changed' && cmp.kind !== 'all') {
+      const geo = !!it.geom, props = it.diffs.length > 0;
+      if ((cmp.kind === 'geom' && !geo) || (cmp.kind === 'props' && !props)) { ids.same.add(id); continue; }
+    }
+    ids[it.status].add(id);
+  }
+  S.isolated = null;
+  cmpGroup.visible = true;
+  setColoring({
+    mode: 'cmp', title: 'Porovnání verzí', only: null,
+    items: [
+      { label: 'Přidané', color: STATUS.added, ids: ids.added },
+      { label: 'Změněné', color: STATUS.changed, ids: ids.changed },
+      { label: 'Odebrané', color: STATUS.removed, ids: new Set(), removed: true, count: cmp.removed.length },
+      { label: 'Beze změny', ghost: true, ids: ids.same },
+    ],
+  });
+  applyVisibility();
+}
+function exitCompare(silent) {
+  if (S.cmpSel != null) ghostDeselect();
+  cmpGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  cmpGroup.clear();
+  const was = !!S.cmp;
+  S.cmp = null; S.cmpGhosts = [];
+  $('#tab-cmp').hidden = true;
+  if (was && S.color?.mode === 'cmp') { S.isolated = null; setColoring(null); applyVisibility(); }
+  if (was && !silent) { showPanel('model'); renderProps(); }
+  requestRender();
+}
+/* výběr odebraného prvku (duch ze starší verze) */
+function selectGhost(i) {
+  deselect(false);
+  const g = S.cmp?.removed[i];
+  if (!g) return;
+  S.cmpSel = i;
+  g.meshes.forEach((m) => { m.material = cmpGhostSelMat; });
+  const c = g.box.getCenter(new THREE.Vector3());
+  const r = Math.max(g.box.getSize(new THREE.Vector3()).length() / 2, 0.5);
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  tween(c.clone().add(dir.multiplyScalar(r * 3.2)), c, true);
+  updateToolbar();
+  if ($('#panel-cmp').hidden && $('#panel-tree').hidden) showPanel('props');
+  renderProps();
+  requestRender();
+}
+function ghostDeselect() {
+  const g = S.cmp?.removed[S.cmpSel];
+  if (g) g.meshes.forEach((m) => { m.material = cmpGhostMat; });
+  S.cmpSel = null;
+}
+function selectAny(id) { if (typeof id === 'string' && id[0] === 'g') selectGhost(Number(id.slice(1))); else select(id); }
+function anyName(id) {
+  if (typeof id === 'string' && id[0] === 'g') { const g = S.cmp?.removed[Number(id.slice(1))]; return g ? `${g.name || g.cls} (odebraný)` : ''; }
+  return nodeName(id) || classLabel(S.elements.get(id)?.cls || '');
+}
+function ghostPropsView(root) {
+  const g = S.cmp.removed[S.cmpSel];
+  root.replaceChildren();
+  const head = el('header', 'el-head');
+  head.append(el('div', 'el-class', g.cls), el('h2', 'el-name', g.name || g.cls));
+  if (g.storey) head.appendChild(el('div', 'el-storey', g.storey));
+  head.appendChild(el('div', 'cmp-badge removed', 'Odebráno – prvek je jen ve starší verzi'));
+  if (g.guid) {
+    const b = el('button', 'guid');
+    b.type = 'button';
+    b.append(el('span', 'guid-k', 'GlobalId'), el('span', 'guid-v', g.guid), el('span', 'guid-a', 'Kopírovat'));
+    b.addEventListener('click', () => copy(g.guid, b));
+    head.appendChild(b);
+  }
+  root.appendChild(head);
+  const bySet = new Map();
+  for (const [k, v] of g.props) {
+    const dot = k.indexOf('.');
+    const set = ATTR_KEYS.includes(k) || dot < 0 ? 'Atributy' : k.slice(0, dot);
+    const name = set === 'Atributy' ? (ATTR_LABEL[k] || k) : k.slice(dot + 1);
+    if (!bySet.has(set)) bySet.set(set, []);
+    bySet.get(set).push([name, v]);
+  }
+  for (const [s, rows] of bySet) root.appendChild(table(s, rows, 'Starší verze'));
+}
+function cmpDiffSection(id) {
+  const it = S.cmp?.items.get(id);
+  if (!it) return null;
+  const sec = el('section', 'pset cmp-sec');
+  const h = el('h3', 'pset-title', 'Změna oproti starší verzi');
+  sec.appendChild(h);
+  if (it.status === 'added') { sec.appendChild(el('div', 'cmp-badge added', 'Přidáno – prvek ve starší verzi není')); return sec; }
+  if (it.status === 'same') { sec.appendChild(el('div', 'cmp-badge same', 'Beze změny')); return sec; }
+  sec.appendChild(el('div', 'cmp-badge changed', 'Změněno'));
+  const dl = el('dl', 'kv cmp-kv');
+  if (it.geom) dl.append(el('dt', null, 'Geometrie'), el('dd', null, it.geom.text));
+  for (const d of it.diffs.slice(0, 80)) {
+    const dd = el('dd');
+    dd.append(el('span', 'cmp-old', d.a || '—'), el('span', 'cmp-arrow', ' → '), el('span', 'cmp-new', d.b || '—'));
+    dl.append(el('dt', null, ATTR_LABEL[d.k] || d.k), dd);
+  }
+  if (it.diffs.length > 80) dl.append(el('dt', null, '…'), el('dd', null, `a dalších ${it.diffs.length - 80} změn`));
+  sec.appendChild(dl);
+  return sec;
+}
+function cmpSummary(it) {
+  if (it.status !== 'changed') return '';
+  const parts = [];
+  if (it.geom) parts.push(it.geom.kind === 'posun' ? it.geom.text.replace(/ \(.*\)$/, '') : it.geom.kind === 'rozmer' ? 'rozměry' : 'tvar');
+  if (it.diffs.length) {
+    const names = it.diffs.slice(0, 3).map((d) => (ATTR_KEYS.includes(d.k) ? (ATTR_LABEL[d.k] || d.k).replace(/ \(.*\)$/, '') : d.k.slice(d.k.indexOf('.') + 1)));
+    parts.push(names.join(', ') + (it.diffs.length > 3 ? ` +${it.diffs.length - 3}` : ''));
+  }
+  return parts.join(' · ');
+}
+function renderCmpPanel() {
+  const root = $('#panel-cmp');
+  root.replaceChildren();
+  const cmp = S.cmp;
+  if (!cmp) { root.appendChild(el('p', 'muted pad', 'Porovnání není spuštěné.')); return; }
+  const head = el('div', 'summary');
+  head.appendChild(el('div', 'summary-title', 'Porovnání verzí'));
+  const facts = el('dl', 'facts');
+  facts.append(el('dt', null, 'Starší'), el('dd', 'cmp-file', cmp.oldName), el('dt', null, 'Aktuální'), el('dd', 'cmp-file', S.fileName));
+  head.appendChild(facts);
+  const acts = el('div', 'res-acts');
+  const b1 = el('button', 'sbtn', 'Export CSV'); b1.type = 'button'; b1.addEventListener('click', exportCompareCsv);
+  const b2 = el('button', 'sbtn', 'Ukončit porovnání'); b2.type = 'button'; b2.addEventListener('click', () => exitCompare());
+  acts.append(b1, b2);
+  head.appendChild(acts);
+  root.appendChild(head);
+  if (cmp.fallback) {
+    root.appendChild(el('div', 'notice', `GlobalId se mezi verzemi z velké části liší. ${cmp.fallback.toLocaleString('cs-CZ')} prvků bylo spárováno náhradně podle třídy, Tagu nebo názvu a polohy, výsledek berte orientačně.`));
+  }
+  // přepínače kategorií = filtr seznamu
+  const cats = [['changed', 'Změněné', STATUS.changed], ['added', 'Přidané', STATUS.added], ['removed', 'Odebrané', STATUS.removed], ['same', 'Beze změny', null]];
+  const seg = el('div', 'cmp-cats');
+  cats.forEach(([k, label, color]) => {
+    const b = el('button', 'cmp-cat');
+    b.type = 'button';
+    b.setAttribute('aria-pressed', String(cmp.filter === k));
+    const sw = el('span', 'lg-sw' + (color ? '' : ' ghost'));
+    if (color) sw.style.background = color;
+    b.append(sw, el('span', 'cmp-cat-n', cmp.counts[k].toLocaleString('cs-CZ')), el('span', 'cmp-cat-l', label));
+    b.addEventListener('click', () => { cmp.filter = k; cmp.limit = 200; renderCmpPanel(); });
+    seg.appendChild(b);
+  });
+  root.appendChild(seg);
+  if (cmp.filter === 'changed') {
+    const kinds = el('div', 'seg cmp-kind');
+    kinds.setAttribute('role', 'group');
+    kinds.setAttribute('aria-label', 'Druh změny');
+    [['all', 'Vše'], ['geom', 'Geometrie'], ['props', 'Vlastnosti']].forEach(([k, l]) => {
+      const b = el('button', null, l); b.type = 'button'; b.setAttribute('aria-pressed', String(cmp.kind === k));
+      b.addEventListener('click', () => { cmp.kind = k; applyCompareColors(); renderCmpPanel(); });
+      kinds.appendChild(b);
+    });
+    root.appendChild(kinds);
+  }
+  // seznam
+  const list = el('div', 'res');
+  let rows = [];
+  if (cmp.filter === 'removed') {
+    rows = cmp.removed.map((g, i) => ({ id: `g${i}`, cls: g.cls, name: g.name, storey: g.storey, sub: '' }));
+  } else {
+    for (const [id, it] of cmp.items) {
+      if (it.status !== cmp.filter) continue;
+      if (it.status === 'changed' && cmp.kind === 'geom' && !it.geom) continue;
+      if (it.status === 'changed' && cmp.kind === 'props' && !it.diffs.length) continue;
+      const r = S.idx.el.get(id);
+      rows.push({ id, cls: r?.a.Třída || '', name: r?.a.Name || '', storey: r?.a.Podlaží || '', sub: cmpSummary(it) });
+    }
+  }
+  if (!rows.length) list.appendChild(el('p', 'muted pad', 'V této skupině nic není.'));
+  const groups = new Map();
+  rows.forEach((r) => { const g = classLabel(r.cls); if (!groups.has(g)) groups.set(g, []); groups.get(g).push(r); });
+  let shown = 0;
+  for (const [g, rs] of [...groups.entries()].sort((a, b) => b[1].length - a[1].length)) {
+    if (shown >= cmp.limit) break;
+    const sec = el('section', 'res-group');
+    sec.appendChild(el('h3', 'group-title', `${g} · ${rs.length.toLocaleString('cs-CZ')}`));
+    for (const r of rs) {
+      if (shown++ >= cmp.limit) break;
+      const b = el('button', 'res-item');
+      b.type = 'button';
+      b.appendChild(el('span', 'res-name', r.name || r.cls));
+      const sub = [r.storey, r.sub].filter(Boolean).join(' · ');
+      if (sub) b.appendChild(el('span', 'res-sub', sub));
+      b.addEventListener('click', () => {
+        list.querySelectorAll('.res-item.on').forEach((x) => x.classList.remove('on'));
+        b.classList.add('on');
+        if (typeof r.id === 'string') { cmpGroup.visible = true; selectGhost(Number(r.id.slice(1))); } else revealAndSelect(r.id);
+      });
+      sec.appendChild(b);
+    }
+    list.appendChild(sec);
+  }
+  if (rows.length > cmp.limit) {
+    const more = el('button', 'link more', `Zobrazit další (${(rows.length - cmp.limit).toLocaleString('cs-CZ')})`);
+    more.type = 'button';
+    more.addEventListener('click', () => { cmp.limit += 400; renderCmpPanel(); });
+    list.appendChild(more);
+  }
+  root.appendChild(list);
+}
+async function exportCompareCsv() {
+  const cmp = S.cmp;
+  if (!cmp) return;
+  const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+  const lines = [['Stav', 'GlobalId', 'Třída', 'Název', 'Podlaží', 'Změna', 'Před', 'Po'].map(q).join(';')];
+  const st = { added: 'Přidáno', changed: 'Změněno' };
+  for (const [id, it] of cmp.items) {
+    if (it.status === 'same') continue;
+    const r = S.idx.el.get(id);
+    const base = [st[it.status], r?.a.GlobalId, r?.a.Třída, r?.a.Name, r?.a.Podlaží];
+    if (it.status === 'added') { lines.push([...base, '', '', ''].map(q).join(';')); continue; }
+    if (it.geom) lines.push([...base, 'Geometrie', '', it.geom.text].map(q).join(';'));
+    for (const d of it.diffs) lines.push([...base, d.k, d.a, d.b].map(q).join(';'));
+  }
+  for (const g of cmp.removed) lines.push(['Odebráno', g.guid, g.cls, g.name, g.storey, '', '', ''].map(q).join(';'));
+  const base = (S.meta?.projectName || S.fileName || 'model').replace(/\.ifc$/i, '').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 60);
+  await saveFile(`${base}-zmeny.csv`, new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv' }), 'text/csv');
+}
+$('#cmp-input').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; compareWith(f); });
+
+/* reset a napojení na načtení modelu */
+function resetFeatures() {
+  exitCompare(true);
+  S.color = null; S.idx = null; S.idxPromise = null; S.idxFor = null;
+  S.spaceGeo = null; S.roomLbl = null; S.legendCollapsed = false;
+  if (S.search) { S.search.results = []; S.search.active = false; }
+  colorMatCache.forEach((m) => m.dispose()); colorMatCache.clear();
+  renderLegend();
+}
+function featuresOnModelLoaded() {
+  if (S.search) { S.search.conds = S.search.conds.filter((c) => ATTR_KEYS.includes(c.key)); }
+  updatePlanLabelUi();
+  if (!$('#panel-search').hidden) renderSearchPanel();
+  // index na pozadí, aby hledání a barvení bylo hned po ruce
+  setTimeout(() => { if (S.modelID != null) ensureIndex().catch(() => {}); }, 600);
+}
 
 /* ---------- boot ---------- */
 renderModelPanel();

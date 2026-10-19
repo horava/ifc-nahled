@@ -10,6 +10,10 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - vlastnosti projektu, pozemku (RefLatitude/RefLongitude, adresa), budovy a podlaží (Elevation, výška v Bpv): klepnutím na název ve Stromu nebo na podlaží v panelu Model, u podlaží a budovy i počet a seznam místností
 - výběr ťuknutím dává přednost místnosti před podlahou nebo stěnou, se kterou splývá; další ťuknutí na stejné místo vybere prvek pod ní
 - strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků
+- **hledání** (záložka Hledat) v názvech, číslech místností, typech, materiálech, GlobalId a hodnotách všech sad vlastností, s **filtrem podle vlastnosti** (=, ≠, obsahuje, začíná na, >, <, je/není vyplněno); výsledky jde izolovat, zvýraznit nebo skrýt
+- **barvení podle vlastnosti** (panel Model) s legendou nad modelem; ťuknutím na položku legendy zůstane vidět jen ta skupina; číselné hodnoty a podlaží dostanou postupnou škálu
+- **porovnání dvou verzí modelu** (Model → Porovnat se starší verzí…): přidané, změněné (geometrie, vlastnosti, atributy) a odebrané prvky podle GlobalId, odebrané jako červení „duchové“, u změněného prvku tabulka před → po, export změn do CSV
+- **popisky místností v půdorysu** (číslo, název, plocha z Qto_SpaceBaseQuantities nebo z geometrie) a uložení půdorysu jako obrázek PNG s měřítkem, severkou a legendou
 - místnosti (IfcSpace) jako průhledné objemy, zapínají se v panelu Model
 - vodorovný, příčný a podélný řez, půdorys podlaží; svislé řezy se samy zarovnají na natočení budovy a jdou ručně natáčet nebo zarovnat kolmo na vybraný prvek
 - měření vzdáleností s přichytáváním k rohům
