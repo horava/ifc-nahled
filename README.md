@@ -25,6 +25,8 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - **více modelů najednou**: k hlavnímu modelu jde přidat podkladové (např. TZB, statika), zarovnané podle georeference (IfcMapConversion obou modelů), jinak podle souřadnic IFC; lze je skrýt, zobrazit průhledně v barvě modelu, ťuknutím zobrazit vlastnosti prvku nebo kterýkoli udělat hlavním (strom, hledání, barvení a porovnání pracují s hlavním modelem)
 - **průvodce při prvním spuštění** (7 kroků, jde přeskočit a spustit znovu) a **návod** pod otazníkem v horní liště: kapitoly podle funkcí, O aplikaci (verze, soukromí) a licence
 - světlý a tmavý režim: výchozí podle nastavení zařízení, tlačítkem v horní liště jde přepnout a volba se pamatuje
+- **velké modely**: soubor se čte po částech a po zpracování se uvolní z paměti, průběh načítání v procentech; modely s tisíci prvků se kreslí sloučeně po podlažích a materiálech (desítky kreslení místo desítek tisíc), opakované tvary jako instance; soubory nad 60 MB bez normál (stínování po ploškách); přichytávání při měření předvybírá prvky u kurzoru
+- **citace zdrojů dat**: u mapových podkladů vpravo dole ve 3D, v záložce Data a v PNG půdorysu (ČÚZK ve tvaru „ČÚZK, rok“, DMVS, statutární město Brno, u vlastních služeb údaj z popisu služby)
 - práci offline po prvním otevření
 
 ## Zveřejnění s přihlášením (Cloudflare Pages + Access)
@@ -112,7 +114,7 @@ s ohledem na jednotky projektu a `MapUnit`. Výpočet probíhá v dvojnásobné 
 
 ## Omezení
 
-- Velké modely (stovky MB) mohou překročit paměť Safari. Pomůže vypnout hrany nebo skrýt část podlaží.
+- Velké modely (stovky MB) potřebují kolem 1 GB paměti; na iPadech se 4 GB RAM je Safari může zavřít. Pomůže zavřít ostatní panely a aplikace nebo model rozdělit na části.
 - Soubory `.ifczip` je potřeba nejdřív rozbalit.
 
 ## Licence

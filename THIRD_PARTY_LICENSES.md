@@ -26,9 +26,14 @@ web-ifc is used **unmodified** (npm package `web-ifc@0.0.77`), bundled into `app
 
 ## Mapové podklady / Map data
 
-Mapy, výškové modely a data, která si uživatel v záložce Data načte z veřejných služeb (např. ČÚZK, statutární město Brno), nejsou součástí aplikace. Řídí se podmínkami jejich poskytovatelů (např. © ČÚZK).
+Mapy, výškové modely a data, která si uživatel v záložce Data načte z veřejných služeb, nejsou součástí aplikace a řídí se podmínkami svých poskytovatelů. Aplikace zdroje vypisuje ve 3D pohledu, v záložce Data a v exportovaném půdorysu:
 
-Maps, elevation models and data loaded by the user from public services are not part of the app and are subject to their providers' terms.
+- **ČÚZK** – otevřená data pod licencí CC BY 4.0, citace ve tvaru „ČÚZK, rok“.
+- **DMVS (ČÚZK)** – služby zpřístupňující data digitálních technických map krajů.
+- **Statutární město Brno** – 3D model budov LoD2.
+- **Vlastní služby uživatele** – citace z popisu služby (ArcGIS `copyrightText`, WMS `Attribution` nebo poskytovatel), jinak adresa serveru.
+
+Maps, elevation models and data loaded by the user from public services are not part of the app and are subject to their providers' terms. The app shows their attribution in the 3D view, the Data tab and exported plans.
 
 ## Vzorový model / Sample model
 

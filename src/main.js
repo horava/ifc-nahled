@@ -192,6 +192,7 @@ new ResizeObserver(resize).observe(viewport);
 function renderFrame() {
   renderer.clear();
   if (typeof setSpaceSide === 'function') setSpaceSide(S.clipOn);
+  bigSync();
   renderer.clippingPlanes = S.clipOn ? [clipPlane] : [];
   renderer.render(scene, camera);
   renderer.clippingPlanes = [];
@@ -199,6 +200,7 @@ function renderFrame() {
   renderer.render(measureScene, camera);
   updateOverlay();
   placeGeoOverlay();
+  if (typeof updateDataAttr === 'function') updateDataAttr();
   updateCompass();
   if (plan.on) updatePlanMarker();
   needsRender = false;
@@ -215,7 +217,7 @@ function zoomAt(cx, cy, amount) {
   const dir = ray.ray.direction.clone();
   let D = null;
   if (S.modelID != null) {
-    const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false);
+    const hits = ray.intersectObjects(S.meshes.filter(pickable), false);
     const hit = hits.find((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
     if (hit) D = hit.distance;
   }
@@ -271,6 +273,8 @@ function clearModel() {
   resetFeatures();
   S.modelGen = (S.modelGen || 0) + 1;
   const geos = new Set();
+  for (const m of S.meshes) if (m.userData.big) geos.add(m.geometry);
+  S.bigChunks = null; S.bigInst = null;
   modelGroup.traverse((o) => { if (o.geometry) geos.add(o.geometry); });
   geos.forEach((g) => g.dispose());
   modelGroup.clear();
@@ -282,7 +286,313 @@ function clearModel() {
   S.modelID = null;
 }
 
-async function loadIfc(buffer, fileName) {
+/* ---------- velké modely ----------
+   Každý prvek má dál svůj „logický“ mesh (výběr, vlastnosti, měření, viditelnost…), ale ty se
+   nekreslí jednotlivě – desítky tisíc kreslení za snímek by iPad nezvládl. Kreslí se sloučené bloky
+   po podlažích a materiálech (geometrie ve světových souřadnicích) a opakované tvary jako instance.
+   Logické meshe sdílejí s bloky pole vrcholů (pohled do stejné paměti), takže paměť se neduplikuje.
+   Prvek, který má jiný materiál než výchozí (výběr, porovnání), se dočasně kreslí samostatně. */
+const BIG_FILE = 60 * 1048576;   // od této velikosti souboru se geometrie čte bez normál (stínování po ploškách)
+const BIG_MESHES = 6000;          // od tohoto počtu meshů se kreslí sloučeně
+const INST_MIN = 16;              // tvar použitý aspoň tolikrát se kreslí jako instance
+const CHUNK_VERTS = 1500000;
+const flatMats = new Map();
+function flatOf(mat) {
+  let f = flatMats.get(mat);
+  if (!f) { f = mat.clone(); f.flatShading = true; flatMats.set(mat, f); }
+  return f;
+}
+const bigGhostMat = new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide, flatShading: true });
+async function streamGeometry(api, modelID, onMesh, total) {
+  const skip = new Set([WebIFC.IFCOPENINGELEMENT, WebIFC.IFCSPACE, WebIFC.IFCOPENINGSTANDARDCASE]);
+  let ids = [];
+  try {
+    for (const t of api.GetIfcEntityList(modelID)) {
+      if (skip.has(t) || !api.IsIfcElement(t)) continue;
+      const v = api.GetLineIDsWithType(modelID, t);
+      for (let i = 0; i < v.size(); i++) ids.push(v.get(i));
+    }
+  } catch (e) { ids = null; }
+  if (!ids) { api.StreamAllMeshes(modelID, onMesh); return; }
+  const B = 1000;
+  let t = performance.now();
+  for (let i = 0; i < ids.length; i += B) {
+    api.StreamMeshes(modelID, ids.slice(i, i + B), onMesh);
+    if (performance.now() - t > 150 && i + B < ids.length) {
+      setLoadingStep(`Čtu geometrii… ${Math.round(100 * (i + B) / ids.length)} % (${(i + B).toLocaleString('cs-CZ')} z ${ids.length.toLocaleString('cs-CZ')} prvků)`);
+      await nextFrame();
+      t = performance.now();
+    }
+  }
+}
+/* geometrie z web-ifc: u velkých souborů jen polohy (bez normál) a 16bitové indexy, kde to jde */
+function geometryFromIfc(v, idx, lean) {
+  const geo = new THREE.BufferGeometry();
+  if (lean) {
+    const n = v.length / 6, P = new Float32Array(n * 3);
+    for (let i = 0, j = 0; i < n; i++, j += 6) { P[i * 3] = v[j]; P[i * 3 + 1] = v[j + 1]; P[i * 3 + 2] = v[j + 2]; }
+    geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+    geo.setIndex(new THREE.BufferAttribute(n < 65536 ? new Uint16Array(idx) : new Uint32Array(idx), 1));
+  } else {
+    const ib = new THREE.InterleavedBuffer(new Float32Array(v), 6);
+    geo.setAttribute('position', new THREE.InterleavedBufferAttribute(ib, 3, 0));
+    geo.setAttribute('normal', new THREE.InterleavedBufferAttribute(ib, 3, 3));
+    geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
+  }
+  geo.computeBoundingSphere();
+  return geo;
+}
+function buildBigRender() {
+  const t0 = performance.now();
+  const uses = new Map();
+  const cand = [];
+  for (const m of S.meshes) {
+    const rec = S.elements.get(m.userData.id);
+    if (!rec || U(rec.cls) === 'IFCSPACE' || !m.geometry.index) continue;
+    cand.push(m);
+    uses.set(m.geometry, (uses.get(m.geometry) || 0) + 1);
+  }
+  const chunkLists = new Map(), instLists = new Map();
+  for (const m of cand) {
+    const rec = S.elements.get(m.userData.id);
+    m.userData.big = true;
+    m.userData.bigMat = m.material;
+    if (uses.get(m.geometry) >= INST_MIN) {
+      const k = m.geometry.uuid + '|' + m.material.uuid;
+      if (!instLists.has(k)) instLists.set(k, []);
+      instLists.get(k).push(m);
+    } else {
+      const k = `${rec.storey}|${m.material.uuid}`;
+      if (!chunkLists.has(k)) chunkLists.set(k, []);
+      chunkLists.get(k).push(m);
+    }
+  }
+  S.bigChunks = [];
+  S.bigInst = [];
+  const left = new Map(uses);
+  for (const list of chunkLists.values()) {
+    let part = [], nv = 0;
+    for (const m of list) {
+      const n = m.geometry.attributes.position.count;
+      if (part.length && nv + n > CHUNK_VERTS) { S.bigChunks.push(makeChunk(part, left)); part = []; nv = 0; }
+      part.push(m); nv += n;
+    }
+    if (part.length) S.bigChunks.push(makeChunk(part, left));
+  }
+  for (const list of instLists.values()) S.bigInst.push(makeInst(list));
+  for (const m of cand) { if (m.parent) m.parent.remove(m); m.updateMatrixWorld(true); }
+  console.info(`Sloučené kreslení: ${S.bigChunks.length} bloků, ${S.bigInst.length} skupin instancí, ${Math.round(performance.now() - t0)} ms`);
+}
+function makeChunk(list, left) {
+  let nv = 0, ni = 0;
+  const withN = list.every((m) => !!m.geometry.attributes.normal);
+  for (const m of list) { nv += m.geometry.attributes.position.count; ni += m.geometry.index.count; }
+  const P = new Float32Array(nv * 3), N = withN ? new Float32Array(nv * 3) : null;
+  const I = nv < 65536 ? new Uint16Array(ni) : new Uint32Array(ni);
+  const nm = new THREE.Matrix3();
+  const c = { members: list, ranges: new Uint32Array(list.length * 2), state: new Uint8Array(list.length) };
+  let vo = 0, io = 0;
+  list.forEach((m, k) => {
+    const g = m.geometry, pos = g.attributes.position, nor = g.attributes.normal, n = pos.count;
+    const w = m.matrix.elements;
+    const arr = pos.isInterleavedBufferAttribute ? pos.data.array : pos.array;
+    const st = pos.isInterleavedBufferAttribute ? pos.data.stride : 3, po = pos.offset || 0;
+    for (let i = 0; i < n; i++) {
+      const a = i * st + po, x = arr[a], y = arr[a + 1], z = arr[a + 2], o = (vo + i) * 3;
+      P[o] = w[0] * x + w[4] * y + w[8] * z + w[12];
+      P[o + 1] = w[1] * x + w[5] * y + w[9] * z + w[13];
+      P[o + 2] = w[2] * x + w[6] * y + w[10] * z + w[14];
+    }
+    if (N) {
+      nm.getNormalMatrix(m.matrix);
+      const n9 = nm.elements;
+      const narr = nor.isInterleavedBufferAttribute ? nor.data.array : nor.array;
+      const nst = nor.isInterleavedBufferAttribute ? nor.data.stride : 3, no = nor.offset || 0;
+      for (let i = 0; i < n; i++) {
+        const b = i * nst + no, x = narr[b], y = narr[b + 1], z = narr[b + 2], o = (vo + i) * 3;
+        N[o] = n9[0] * x + n9[3] * y + n9[6] * z; N[o + 1] = n9[1] * x + n9[4] * y + n9[7] * z; N[o + 2] = n9[2] * x + n9[5] * y + n9[8] * z;
+      }
+    }
+    const ia = g.index.array;
+    for (let i = 0; i < ia.length; i++) I[io + i] = ia[i] + vo;
+    c.ranges[k * 2] = io; c.ranges[k * 2 + 1] = ia.length;
+    // logický mesh: pohled do polí bloku, vlastní (lokální) index, světové souřadnice
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.BufferAttribute(P.subarray(vo * 3, (vo + n) * 3), 3));
+    if (N) lg.setAttribute('normal', new THREE.BufferAttribute(N.subarray(vo * 3, (vo + n) * 3), 3));
+    lg.setIndex(new THREE.BufferAttribute(n < 65536 && !(ia instanceof Uint16Array) ? new Uint16Array(ia) : ia, 1));
+    lg.computeBoundingSphere();
+    const rest = left.get(g) - 1;
+    left.set(g, rest);
+    if (rest <= 0) g.dispose();
+    m.geometry = lg;
+    m.matrix.identity();
+    vo += n; io += ia.length;
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  if (N) geo.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  c.full = new THREE.BufferAttribute(I, 1);
+  geo.setIndex(c.full);
+  geo.computeBoundingSphere();
+  const base = list[0].material;
+  c.mesh = new THREE.Mesh(geo, [N ? base : flatOf(base), bigGhostMat]);
+  c.mesh.userData.bigChunk = true;
+  c.mesh.matrixAutoUpdate = false;
+  if (base.transparent) c.mesh.renderOrder = 1;
+  modelGroup.add(c.mesh);
+  return c;
+}
+function makeInst(list) {
+  const geo = list[0].geometry, base = list[0].material;
+  const mat = geo.attributes.normal ? base : flatOf(base);
+  const g = { members: list, state: new Uint8Array(list.length), geo, mat };
+  g.mesh = new THREE.InstancedMesh(geo, mat, list.length);
+  g.mesh.userData.bigChunk = true;
+  modelGroup.add(g.mesh);
+  return g;
+}
+/* stav prvku pro kreslení: 0 skrytý, 1 ve sloučeném bloku, 2 samostatně (jiný materiál), 3 duch při barvení */
+function bigState(m) {
+  if (!m.visible) return 0;
+  if (m.material === m.userData.bigMat) return 1;
+  if (S.color && m.userData.ghost && S.selected !== m.userData.id) return 3;
+  return 2;
+}
+function setOverlay(m, on) {
+  if (on) {
+    if (!m.geometry.attributes.normal) m.geometry.computeVertexNormals();
+    if (m.parent !== modelGroup) modelGroup.add(m);
+  } else if (m.parent) m.parent.remove(m);
+}
+function bigSync() {
+  if (!S.bigChunks) return;
+  if (S.color) bigGhostMat.color.set(ghostColor());
+  for (const c of S.bigChunks) {
+    let changed = false;
+    const st = c.state;
+    for (let k = 0; k < c.members.length; k++) {
+      const m = c.members[k], s = bigState(m);
+      if (s !== st[k]) { if (s === 2 || st[k] === 2) setOverlay(m, s === 2); st[k] = s; changed = true; }
+    }
+    if (changed || !c.ready) chunkIndex(c);
+  }
+  for (const g of S.bigInst) {
+    let changed = false;
+    const st = g.state;
+    for (let k = 0; k < g.members.length; k++) {
+      const m = g.members[k], s = bigState(m);
+      if (s !== st[k]) { if (s === 2 || st[k] === 2) setOverlay(m, s === 2); st[k] = s; changed = true; }
+    }
+    if (changed || !g.ready) instUpdate(g);
+  }
+}
+function chunkIndex(c) {
+  c.ready = true;
+  const geo = c.mesh.geometry, full = c.full.array, st = c.state, R = c.ranges;
+  let n1 = 0, n3 = 0;
+  for (let k = 0; k < st.length; k++) { if (st[k] === 1) n1 += R[k * 2 + 1]; else if (st[k] === 3) n3 += R[k * 2 + 1]; }
+  geo.clearGroups();
+  c.mesh.visible = n1 + n3 > 0;
+  if (n1 === full.length) { geo.setIndex(c.full); geo.addGroup(0, n1, 0); return; }
+  if (!c.part) c.part = new THREE.BufferAttribute(new full.constructor(full.length), 1);
+  const out = c.part.array;
+  let o = 0;
+  for (const want of [1, 3]) {
+    for (let k = 0; k < st.length; k++) {
+      if (st[k] !== want) continue;
+      const a = R[k * 2], n = R[k * 2 + 1];
+      out.set(full.subarray(a, a + n), o);
+      o += n;
+    }
+  }
+  c.part.needsUpdate = true;
+  geo.setIndex(c.part);
+  if (n1) geo.addGroup(0, n1, 0);
+  if (n3) geo.addGroup(n1, n3, 1);
+}
+function instUpdate(g) {
+  g.ready = true;
+  let n1 = 0, n3 = 0;
+  for (let k = 0; k < g.state.length; k++) {
+    const s = g.state[k];
+    if (s === 1) g.mesh.setMatrixAt(n1++, g.members[k].matrix);
+  }
+  g.mesh.count = n1;
+  g.mesh.visible = n1 > 0;
+  g.mesh.instanceMatrix.needsUpdate = true;
+  g.mesh.computeBoundingSphere();
+  for (let k = 0; k < g.state.length; k++) if (g.state[k] === 3) n3++;
+  if (n3 && !g.ghost) {
+    g.ghost = new THREE.InstancedMesh(g.geo, bigGhostMat, g.members.length);
+    g.ghost.userData.bigChunk = true;
+    modelGroup.add(g.ghost);
+  }
+  if (g.ghost) {
+    let j = 0;
+    for (let k = 0; k < g.state.length; k++) if (g.state[k] === 3) g.ghost.setMatrixAt(j++, g.members[k].matrix);
+    g.ghost.count = j;
+    g.ghost.visible = j > 0;
+    g.ghost.instanceMatrix.needsUpdate = true;
+    g.ghost.computeBoundingSphere();
+  }
+}
+/* prvek, na který jde ťuknout / přichytit se (duchové velkého modelu jsou „viditelní“ jen kvůli kreslení) */
+const pickable = (m) => m.visible && !(S.color && m.userData.big && m.userData.ghost && S.selected !== m.userData.id);
+
+function memlog(tag) {
+  if (!window.__memdbg) return;
+  let wasm = 0; try { wasm = S.api.wasmModule.HEAPU8.length; } catch (e) { /* */ }
+  const pm = performance.memory || {};
+  console.log(`MEM ${tag} js=${Math.round((pm.usedJSHeapSize || 0) / 1e6)} wasm=${Math.round(wasm / 1e6)} t=${Math.round(performance.now())}`);
+}
+/* soubor po částech: web-ifc čte soubor postupně, takže přečtené části můžeme hned pustit a
+   v paměti nejsou zároveň celý soubor i jeho zpracovaná podoba */
+const READ_PART = 16 * 1048576;
+async function readParts(src) {
+  if (!(src instanceof Blob)) return { parts: [src], part: Math.max(1, src.byteLength), size: src.byteLength };
+  const parts = [];
+  let t = performance.now();
+  for (let off = 0; off < src.size; off += READ_PART) {
+    parts.push(await src.slice(off, off + READ_PART).arrayBuffer());
+    if (performance.now() - t > 200) { setLoadingStep(`Čtu soubor… ${Math.round(100 * off / src.size)} %`); await nextFrame(); t = performance.now(); }
+  }
+  return { parts, part: READ_PART, size: src.size };
+}
+/* web-ifc čte soubor dvakrát za sebou (při druhém průchodu staví svou vnitřní podobu); během druhého
+   průchodu už přečtené části pouštíme, takže v paměti nejsou zároveň celý soubor i celý model.
+   Kdyby web-ifc četl ještě znovu, otevře se soubor podruhé bez uvolňování. */
+function openParts(api, F, allowFree) {
+  let passes = 0, backRead = false;
+  // čtení přes vlastní zpětné volání: web-ifc si funkci pro čtení drží i po otevření (a s ní by
+  // v paměti zůstal celý soubor), proto data bereme z F, které po otevření vyprázdníme
+  const id = api.OpenModelFromCallback((off, size) => {
+    if (off === 0) passes++;
+    // web-ifc chce plný požadovaný úsek (kratší bere jako konec souboru), proto skládáme přes hranice částí
+    const n = Math.max(0, Math.min(size, F.size - off));
+    const p0 = Math.floor(off / F.part);
+    if (allowFree && passes >= 2) for (let i = 0; i < p0; i++) F.parts[i] = null;
+    if (!n) return new Uint8Array(0);
+    const b0 = F.parts[p0];
+    if (!b0) { backRead = true; return new Uint8Array(0); }
+    const w0 = off - p0 * F.part;
+    if (w0 + n <= b0.byteLength) return new Uint8Array(b0, w0, n);
+    const out = new Uint8Array(n);
+    let o = 0, p = p0, w = w0;
+    while (o < n) {
+      const b = F.parts[p];
+      if (!b) { backRead = true; break; }
+      const k = Math.min(n - o, b.byteLength - w);
+      out.set(new Uint8Array(b, w, k), o);
+      o += k; p++; w = 0;
+    }
+    return out;
+  }, { COORDINATE_TO_ORIGIN: true });
+  F.parts = [];
+  if (backRead) { if (id >= 0) try { api.CloseModel(id); } catch (e) { /* */ } return 'retry'; }
+  return id;
+}
+async function loadIfc(source, fileName) {
   showLoading(`Načítám ${fileName}`);
   await nextFrame();
   try {
@@ -291,7 +601,18 @@ async function loadIfc(buffer, fileName) {
     await nextFrame();
     clearModel();
     const t0 = performance.now();
-    const modelID = api.OpenModel(new Uint8Array(buffer), { COORDINATE_TO_ORIGIN: true });
+    const blob = source instanceof Blob ? source : null;
+    let F = await readParts(source);
+    source = null;
+    memlog('start');
+    const lean = F.size > BIG_FILE;
+    setLoadingStep('Zpracovávám soubor…');
+    await nextFrame();
+    let modelID = openParts(api, F, true);
+    if (modelID === 'retry' && blob) { F = await readParts(blob); modelID = openParts(api, F, false); }
+    F = null;
+    if (modelID === 'retry') throw new Error('Soubor se nepodařilo přečíst celý.');
+    memlog('opened');
     if (modelID < 0) throw new Error('Soubor se nepodařilo otevřít. Je to platný IFC (STEP)?');
     S.modelID = modelID;
     S.fileName = fileName;
@@ -311,14 +632,9 @@ async function loadIfc(buffer, fileName) {
           const g = api.GetGeometry(modelID, pg.geometryExpressID);
           const v = api.GetVertexArray(g.GetVertexData(), g.GetVertexDataSize());
           const idx = api.GetIndexArray(g.GetIndexData(), g.GetIndexDataSize());
+          if (!idx.length) { g.delete(); continue; }
+          geo = geometryFromIfc(v, idx, lean);
           g.delete();
-          if (!idx.length) continue;
-          const ib = new THREE.InterleavedBuffer(new Float32Array(v), 6);
-          geo = new THREE.BufferGeometry();
-          geo.setAttribute('position', new THREE.InterleavedBufferAttribute(ib, 3, 0));
-          geo.setAttribute('normal', new THREE.InterleavedBufferAttribute(ib, 3, 3));
-          geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
-          geo.computeBoundingSphere();
           geoCache.set(pg.geometryExpressID, geo);
         }
         const mesh = new THREE.Mesh(geo, materialFor(pg.color));
@@ -333,7 +649,8 @@ async function loadIfc(buffer, fileName) {
         withEdges.push(mesh);
       }
     };
-    api.StreamAllMeshes(modelID, onMesh);
+    await streamGeometry(api, modelID, onMesh);
+    memlog('meshes');
     // web-ifc vynechává IfcSpace, místnosti načteme zvlášť
     try { api.StreamAllMeshesWithTypes(modelID, [WebIFC.IFCSPACE], onMesh); } catch (e) { console.warn('IfcSpace', e); }
 
@@ -347,6 +664,7 @@ async function loadIfc(buffer, fileName) {
       if (U(cls) === 'IFCSPACE') for (const m of rec.meshes) { m.material = spaceMat; m.renderOrder = 2; }
     }
 
+    memlog('classes');
     // spatial structure
     setLoadingStep('Čtu podlaží…');
     await nextFrame();
@@ -377,9 +695,13 @@ async function loadIfc(buffer, fileName) {
       if (s) s.count++; else { rec.storey = -1; orphan++; }
     }
     if (orphan) S.storeys.push({ id: -1, name: 'Mimo podlaží', elev: Infinity, visible: true, count: orphan });
+    memlog('spatial');
 
+    // velké modely: sloučené kreslení (hrany se u nich nekreslí)
+    const chunked = lean || S.meshes.length >= BIG_MESHES;
+    if (chunked) { setLoadingStep('Připravuji zobrazení…'); await nextFrame(); buildBigRender(); memlog('chunked'); }
     // edges (skip for very heavy models)
-    if (withEdges.length < 6000) {
+    if (!chunked && withEdges.length < 6000) {
       for (const mesh of withEdges) {
         if (U(S.elements.get(mesh.userData.id)?.cls) === 'IFCSPACE') continue;
         let eg = edgeCache.get(mesh.userData.geoId);
@@ -428,6 +750,7 @@ async function loadIfc(buffer, fileName) {
     $('#file-name').textContent = fileName;
     $('#file-name').title = fileName;
     $('#empty-hint').hidden = true;
+    memlog('done');
     hideLoading();
     toast(`Načteno: ${S.elements.size.toLocaleString('cs-CZ')} prvků za ${nf.format(S.meta.ms / 1000)} s`);
   } catch (err) {
@@ -463,7 +786,7 @@ function syncMeshVisibility() {
   const merge = !!S.color;
   for (const [id, rec] of S.elements) {
     const v = isVisible(id, rec);
-    for (const m of rec.meshes) m.visible = v && !(merge && m.userData.ghost && id !== S.selected);
+    for (const m of rec.meshes) m.visible = v && !(merge && m.userData.ghost && id !== S.selected && !m.userData.big);
   }
   if (typeof rebuildGhosts === 'function') rebuildGhosts();
 }
@@ -512,7 +835,7 @@ function deselect(render = true) {
     const rec = S.elements.get(S.selected);
     if (rec) for (const m of rec.meshes) {
       if (m.userData.mat) m.material = m.userData.mat;
-      if (m.userData.ghost && S.color) m.visible = false;
+      if (m.userData.ghost && S.color && !m.userData.big) m.visible = false;
       for (const c of [...m.children]) if (c.userData.selOutline) { m.remove(c); c.geometry.dispose(); }
     }
   }
@@ -641,7 +964,7 @@ function hitAt(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
   ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ptr, camera);
-  const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false);
+  const hits = ray.intersectObjects(S.meshes.filter(pickable), false);
   return hits.find((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4) || null;
 }
 /* dvojité klepnutí: bod se přesune do středu pohledu a stane se středem otáčení */
@@ -664,7 +987,7 @@ function pickCandidates(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
   ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
   ray.setFromCamera(ptr, camera);
-  const targets = S.meshes.filter((m) => m.visible);
+  const targets = S.meshes.filter(pickable);
   if (S.cmp && cmpGroup.visible) targets.push(...(S.cmpGhosts || []));
   for (const R of S.refs || []) if (R.visible && !R.ghost) targets.push(...R.meshes);
   const hits = ray.intersectObjects(targets, false)
@@ -1027,7 +1350,7 @@ const _snOcc = new THREE.Raycaster();
 const _snPtr = new THREE.Vector2();
 const _sa = new THREE.Vector3(), _sb = new THREE.Vector3(), _sq = new THREE.Vector3(), _sd = new THREE.Vector3();
 function snapTargets() {
-  const t = S.meshes.filter((m) => m.visible);
+  const t = S.meshes.filter(pickable);
   for (const R of S.refs || []) if (R.visible && !R.ghost) for (const m of R.meshes) if (m.visible) t.push(m);
   return t;
 }
@@ -1053,12 +1376,34 @@ function occluded(p, targets) {
   const h = _snOcc.intersectObjects(targets, false).find((x) => notCut(x.point));
   return !!h && h.distance < dist - Math.max(0.01, dist * 0.003);
 }
+/* předvýběr prvků, jejichž obalová koule je u paprsku pod kurzorem (velké modely: místo desítek tisíc
+   prvků se testuje jen pár desítek) */
+const _sph = new THREE.Sphere(), _sv = new THREE.Vector3(), _nr = new THREE.Raycaster();
+function nearRay(list, cx, cy, Rpx) {
+  const r = renderer.domElement.getBoundingClientRect();
+  _snPtr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  _nr.setFromCamera(_snPtr, camera);
+  const ray = _nr.ray;
+  const k = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / r.height;
+  const out = [];
+  for (const m of list) {
+    const g = m.geometry;
+    if (!g.boundingSphere) g.computeBoundingSphere();
+    _sph.copy(g.boundingSphere).applyMatrix4(m.matrixWorld);
+    const t = _sv.copy(_sph.center).sub(ray.origin).dot(ray.direction);
+    if (t < -_sph.radius) continue;
+    const tol = _sph.radius + Rpx * 1.5 * k * Math.max(t, camera.near);
+    if (ray.distanceSqToPoint(_sph.center) <= tol * tol) out.push(m);
+  }
+  return out;
+}
 function findSnap(cx, cy, type) {
   if (S.modelID == null) return null;
   const R = SNAP_PX[type] || SNAP_PX.touch;
   const rect = renderer.domElement.getBoundingClientRect();
   const sx = cx - rect.left, sy = cy - rect.top;
-  const targets = snapTargets();
+  let targets = snapTargets();
+  if (targets.length > 1500) targets = nearRay(targets, cx, cy, R);
   const center = castAt(_snRay, cx, cy, targets);
   const ray0 = _snRay.ray.clone();
   const near = new Map();
@@ -2116,6 +2461,7 @@ function renderPlanImage(f) {
   if (typeof setSpaceSide === 'function') setSpaceSide(true);
   renderer.clippingPlanes = [planCutPlane];
   renderer.clear();
+  bigSync();
   renderer.render(scene, oc);
   renderer.setRenderTarget(null);
   renderer.clippingPlanes = [];
@@ -4307,7 +4653,7 @@ function rebuildGhosts() {
   const list = [];
   let nv = 0, ni = 0, ne = 0;
   for (const [id, rec] of S.elements) {
-    if (!rec.meshes[0]?.userData.ghost || !isVisible(id, rec)) continue;
+    if (!rec.meshes[0]?.userData.ghost || rec.meshes[0].userData.big || !isVisible(id, rec)) continue;
     for (const m of rec.meshes) {
       const pos = m.geometry.attributes.position, ix = m.geometry.index;
       if (!pos || !ix) continue;
@@ -4688,6 +5034,7 @@ async function exportPlanPng() {
   if (typeof setSpaceSide === 'function') setSpaceSide(true);
   renderer.clippingPlanes = [planCutPlane];
   renderer.clear();
+  bigSync();
   renderer.render(scene, plan.cam);
   renderer.setRenderTarget(null);
   renderer.clippingPlanes = [];
@@ -4746,6 +5093,16 @@ async function exportPlanPng() {
   g.restore();
   g.fillStyle = muted; g.font = `600 10px ${sans}`; g.textAlign = 'right';
   g.fillText(S.geo?.ok ? 'sever mapy' : 'sever projektu', w - 42, 30);
+  // citace mapových podkladů
+  let srcs = [];
+  try { srcs = dataAttribution(true); } catch (e) { /* bez dat */ }
+  if (srcs.length) {
+    const t = `Zdroje dat: ${srcs.join(' · ')}`;
+    g.font = `10px ${sans}`; g.textAlign = 'right';
+    const tw = g.measureText(t).width;
+    g.fillStyle = bg; g.globalAlpha = 0.85; g.fillRect(w - tw - 12, head + h - 18, tw + 10, 15); g.globalAlpha = 1;
+    g.fillStyle = muted; g.fillText(t, w - 7, head + h - 7);
+  }
   if (S.color) {
     // legenda barvení
     g.textAlign = 'left';
@@ -5463,29 +5820,69 @@ $('#cmp-input').addEventListener('change', (e) => { const f = e.target.files[0];
 const CUZK = 'https://ags.cuzk.gov.cz';
 const DATA_CATALOG = [
   { group: 'Mapy', items: [
-    { key: 'orto', name: 'Ortofoto ČR', note: 'ČÚZK', src: { type: 'agsmap', url: `${CUZK}/arcgis1/rest/services/ORTOFOTO/MapServer`, format: 'jpg' } },
-    { key: 'km', name: 'Katastrální mapa', note: 'ČÚZK, WMS', src: { type: 'wms', url: 'https://services.cuzk.gov.cz/wms/local-km-wms.asp', layers: 'KN' } },
-    { key: 'ztm', name: 'Základní topografická mapa', note: 'ČÚZK', src: { type: 'agsmap', url: `${CUZK}/arcgis1/rest/services/ZTM/MapServer`, format: 'png' } },
-    { key: 'zabaged', name: 'ZABAGED polohopis', note: 'ČÚZK, s atributy', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_POLOHOPIS/MapServer`, format: 'png32', transparent: true, identify: true } },
-    { key: 'vrst', name: 'Vrstevnice', note: 'ČÚZK ZABAGED', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_VRSTEVNICE/MapServer`, format: 'png32', transparent: true } },
+    { key: 'orto', name: 'Ortofoto ČR', note: 'ČÚZK', src: { attr: 'ČÚZK', type: 'agsmap', url: `${CUZK}/arcgis1/rest/services/ORTOFOTO/MapServer`, format: 'jpg' } },
+    { key: 'km', name: 'Katastrální mapa', note: 'ČÚZK, WMS', src: { attr: 'ČÚZK', type: 'wms', url: 'https://services.cuzk.gov.cz/wms/local-km-wms.asp', layers: 'KN' } },
+    { key: 'ztm', name: 'Základní topografická mapa', note: 'ČÚZK', src: { attr: 'ČÚZK', type: 'agsmap', url: `${CUZK}/arcgis1/rest/services/ZTM/MapServer`, format: 'png' } },
+    { key: 'zabaged', name: 'ZABAGED polohopis', note: 'ČÚZK, s atributy', src: { attr: 'ČÚZK', type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_POLOHOPIS/MapServer`, format: 'png32', transparent: true, identify: true } },
+    { key: 'vrst', name: 'Vrstevnice', note: 'ČÚZK ZABAGED', src: { attr: 'ČÚZK', type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_VRSTEVNICE/MapServer`, format: 'png32', transparent: true } },
   ] },
   { group: 'Digitální technická mapa (DMVS)', items: [
-    { key: 'dtm_ti', name: 'DTM – technická infrastruktura', note: 'ČÚZK DMVS, veřejná část, WMS 1.3.0', src: { type: 'wms', url: 'https://dmvs.cuzk.gov.cz/api/wms/dtm_ti_ver', layers: '*', version: '1.3.0' } },
-    { key: 'dtm_di', name: 'DTM – dopravní infrastruktura', note: 'ČÚZK DMVS, WMS 1.3.0', src: { type: 'wms', url: 'https://dmvs.cuzk.gov.cz/api/wms/dtm_di_ver', layers: '*', version: '1.3.0' } },
+    { key: 'dtm_ti', name: 'DTM – technická infrastruktura', note: 'ČÚZK DMVS, veřejná část, WMS 1.3.0', src: { attr: 'DMVS', type: 'wms', url: 'https://dmvs.cuzk.gov.cz/api/wms/dtm_ti_ver', layers: '*', version: '1.3.0' } },
+    { key: 'dtm_di', name: 'DTM – dopravní infrastruktura', note: 'ČÚZK DMVS, WMS 1.3.0', src: { attr: 'DMVS', type: 'wms', url: 'https://dmvs.cuzk.gov.cz/api/wms/dtm_di_ver', layers: '*', version: '1.3.0' } },
   ] },
   { group: 'Terén', items: [
-    { key: 'dmr5g', name: 'Terén DMR 5G', note: 'ČÚZK, mřížka 2 m, mapy a vektory se na něj položí', src: { type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmr5g/ImageServer`, cell: 2 } },
-    { key: 'dmp1g', name: 'Povrch DMP 1G', note: 'ČÚZK, včetně budov a vegetace', src: { type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmp1g/ImageServer`, cell: 1 } },
+    { key: 'dmr5g', name: 'Terén DMR 5G', note: 'ČÚZK, mřížka 2 m, mapy a vektory se na něj položí', src: { attr: 'ČÚZK', type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmr5g/ImageServer`, cell: 2 } },
+    { key: 'dmp1g', name: 'Povrch DMP 1G', note: 'ČÚZK, včetně budov a vegetace', src: { attr: 'ČÚZK', type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmp1g/ImageServer`, cell: 1 } },
   ] },
   { group: '3D budovy', items: [
-    { key: 'brno3d', name: 'Brno – budovy LoD2 (barevné)', note: 'Magistrát města Brna, SceneServer', src: { type: 'i3s', url: 'https://gis.brno.cz/ags1/rest/services/OMI/OMI_3D_budovy_lod2_obarveny_sjtsk/SceneServer' } },
+    { key: 'brno3d', name: 'Brno – budovy LoD2 (barevné)', note: 'Statutární město Brno, SceneServer', src: { attr: 'Statutární město Brno', type: 'i3s', url: 'https://gis.brno.cz/ags1/rest/services/OMI/OMI_3D_budovy_lod2_obarveny_sjtsk/SceneServer' } },
   ] },
   { group: 'Katastr a adresy (RÚIAN, vektory s atributy)', items: [
-    { key: 'parcely', name: 'Parcely', note: 'čísla parcel, výměra', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/5`, label: 'cisloparcely', color: '#1baf7a' } },
-    { key: 'budovy', name: 'Stavební objekty', note: 'čísla domovní, podlaží', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/3`, label: 'cisladomovni', color: '#e34948' } },
-    { key: 'adresy', name: 'Adresní místa', note: 'body adres', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/1`, color: '#6250d6' } },
+    { key: 'parcely', name: 'Parcely', note: 'čísla parcel, výměra', src: { attr: 'ČÚZK', type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/5`, label: 'cisloparcely', color: '#1baf7a' } },
+    { key: 'budovy', name: 'Stavební objekty', note: 'čísla domovní, podlaží', src: { attr: 'ČÚZK', type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/3`, label: 'cisladomovni', color: '#e34948' } },
+    { key: 'adresy', name: 'Adresní místa', note: 'body adres', src: { attr: 'ČÚZK', type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/1`, color: '#6250d6' } },
   ] },
 ];
+/* ---------- zdroje dat (citace) ----------
+   ČÚZK žádá uvádět zdroj ve tvaru „ČÚZK, rok“ (data pod licencí CC BY 4.0). U vlastních služeb se bere
+   text z popisu služby (ArcGIS copyrightText, WMS Attribution / poskytovatel), jinak adresa serveru. */
+function cleanAttr(t) {
+  if (!t) return '';
+  // DOMParser je inertní (žádné skripty ani načítání obrázků z cizího textu)
+  const d = new DOMParser().parseFromString(String(t), 'text/html');
+  return (d.body.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+}
+function layerAttr(L) {
+  const a = L.src?.attr;
+  const host = (() => { try { return new URL(L.src.url).hostname; } catch (e) { return ''; } })();
+  const year = new Date().getFullYear();
+  if (a === 'DMVS' || (!a && /dmvs\.cuzk\.gov\.cz$/i.test(host))) return `ČÚZK (DMVS), data digitálních technických map krajů, ${year}`;
+  if (a === 'ČÚZK' || (!a && /cuzk\.(gov\.)?cz$/i.test(host))) return `ČÚZK, ${year}`;
+  if (a) return a;
+  if (/(^|\.)brno\.cz$/i.test(host)) return 'Statutární město Brno';
+  return host;
+}
+function dataAttribution(onlyShown) {
+  const seen = new Set();
+  for (const L of D.layers) {
+    if (onlyShown && (!L.visible || L.state !== 'ok')) continue;
+    const a = layerAttr(L);
+    if (a) seen.add(a);
+  }
+  return [...seen];
+}
+let attrShown = null;
+function updateDataAttr() {
+  const elA = document.getElementById('data-attr');
+  if (!elA) return;
+  let list = [];
+  try { list = S.modelID != null ? dataAttribution(true) : []; } catch (e) { return; }
+  const t = list.length ? `Zdroje dat: ${list.join(' · ')}` : '';
+  if (t === attrShown) return;
+  attrShown = t;
+  elA.textContent = t;
+  elA.hidden = !t;
+}
 const DATA_KEY = 'ifc-nahled-data-layers';
 const dataGroup = new THREE.Group();
 dataGroup.name = 'data';
@@ -6308,13 +6705,16 @@ async function inspectService(raw) {
   if (scene) {
     const lid = scene[3] ?? 0;
     const info = await fetchJson(`${scene[1]}/layers/${lid}?f=json`);
-    return [{ name: info.name || 'Scéna', note: `SceneServer · ${info.layerType || ''}`, src: { type: 'i3s', url: `${scene[1]}/layers/${lid}` }, custom: true }];
+    let attr = cleanAttr(info.copyrightText);
+    if (!attr) { try { attr = cleanAttr((await fetchJson(`${scene[1]}?f=json`)).copyrightText); } catch (e) { /* bez popisu */ } }
+    return [{ name: info.name || 'Scéna', note: `SceneServer · ${info.layerType || ''}`, src: { type: 'i3s', url: `${scene[1]}/layers/${lid}`, attr }, custom: true }];
   }
   if (/\/ImageServer\/?(\?.*)?$/i.test(url)) {
     const base0 = url.replace(/\?.*$/, '').replace(/\/+$/, '');
     const info = await fetchJson(`${base0}?f=json`);
-    const out0 = [{ name: `${info.name || 'Rastr'} (obrázek)`, note: 'ArcGIS ImageServer', src: { type: 'agsimg', url: base0 }, custom: true }];
-    if (info.bandCount === 1 && /F32|F64|S16|S32|U16/i.test(info.pixelType || '')) out0.unshift({ name: `${info.name || 'Rastr'} jako terén`, note: `výšky, buňka ${nf.format(info.pixelSizeX || 0)} m`, src: { type: 'agsterrain', url: base0, cell: info.pixelSizeX || 2 }, custom: true });
+    const attr = cleanAttr(info.copyrightText);
+    const out0 = [{ name: `${info.name || 'Rastr'} (obrázek)`, note: 'ArcGIS ImageServer', src: { type: 'agsimg', url: base0, attr }, custom: true }];
+    if (info.bandCount === 1 && /F32|F64|S16|S32|U16/i.test(info.pixelType || '')) out0.unshift({ name: `${info.name || 'Rastr'} jako terén`, note: `výšky, buňka ${nf.format(info.pixelSizeX || 0)} m`, src: { type: 'agsterrain', url: base0, cell: info.pixelSizeX || 2, attr }, custom: true });
     return out0;
   }
   const ags = url.match(/^(.*\/(MapServer|FeatureServer|ImageServer))(\/(\d+))?\/?(\?.*)?$/i);
@@ -6322,15 +6722,18 @@ async function inspectService(raw) {
     const base = ags[1], layer = ags[4];
     if (layer != null) {
       const info = await fetchJson(`${base}/${layer}?f=json`);
-      return [{ name: info.name || `Vrstva ${layer}`, note: 'ArcGIS, vektory', src: { type: 'agsfeat', url: `${base}/${layer}` }, custom: true }];
+      let attr = cleanAttr(info.copyrightText);
+      if (!attr) { try { attr = cleanAttr((await fetchJson(`${base}?f=json`)).copyrightText); } catch (e) { /* bez popisu */ } }
+      return [{ name: info.name || `Vrstva ${layer}`, note: 'ArcGIS, vektory', src: { type: 'agsfeat', url: `${base}/${layer}`, attr }, custom: true }];
     }
     const info = await fetchJson(`${base}?f=json`);
     const title = info.documentInfo?.Title || info.mapName || info.name || base.split('/').slice(-2, -1)[0];
-    if (/ImageServer$/i.test(base)) return [{ name: title || 'Rastr', note: 'ArcGIS ImageServer', src: { type: 'agsimg', url: base }, custom: true }];
+    const attr = cleanAttr(info.copyrightText);
+    if (/ImageServer$/i.test(base)) return [{ name: title || 'Rastr', note: 'ArcGIS ImageServer', src: { type: 'agsimg', url: base, attr }, custom: true }];
     const out = [];
-    if (/MapServer$/i.test(base)) out.push({ name: `${title} (mapa)`, note: 'ArcGIS, obrázek všech vrstev', src: { type: 'agsmap', url: base, format: 'png32', transparent: true, identify: true }, custom: true });
+    if (/MapServer$/i.test(base)) out.push({ name: `${title} (mapa)`, note: 'ArcGIS, obrázek všech vrstev', src: { type: 'agsmap', url: base, format: 'png32', transparent: true, identify: true, attr }, custom: true });
     const canQuery = /Query/i.test(info.capabilities || '') || /FeatureServer$/i.test(base);
-    if (canQuery) (info.layers || []).filter((l) => !l.subLayerIds?.length).slice(0, 60).forEach((l) => out.push({ name: l.name, note: 'vektory s atributy', src: { type: 'agsfeat', url: `${base}/${l.id}` }, custom: true }));
+    if (canQuery) (info.layers || []).filter((l) => !l.subLayerIds?.length).slice(0, 60).forEach((l) => out.push({ name: l.name, note: 'vektory s atributy', src: { type: 'agsfeat', url: `${base}/${l.id}`, attr }, custom: true }));
     return out;
   }
   // WMS (1.3.0 i 1.1.1)
@@ -6338,7 +6741,7 @@ async function inspectService(raw) {
   const cap = await wmsCaps(base);
   const F = dataFrame();
   const out = [];
-  const common = { type: 'wms', url: base, version: cap.version, format: cap.format, infoFormat: cap.infoFormat };
+  const common = { type: 'wms', url: base, version: cap.version, format: cap.format, infoFormat: cap.infoFormat, attr: cap.attr };
   if (cap.all) out.push({ name: `${cap.title} – všechny vrstvy`, note: `WMS ${cap.version}`, src: { ...common, layers: cap.all, queryable: cap.queryAll } });
   for (const l of cap.layers.slice(0, 80)) out.push({ name: l.title, note: `WMS ${cap.version} · ${cap.title}`, src: { ...common, layers: l.name, queryable: l.queryable ? l.name : '' } });
   if (F && !cap.crs.includes(`EPSG:${F.sr}`)) out.warn = `Služba v popisu neuvádí souřadnicový systém EPSG:${F.sr}. Mapa se nemusí zobrazit.`;
@@ -6381,7 +6784,10 @@ async function wmsCaps(base) {
   let all = root?.querySelector(':scope > Name')?.textContent?.trim() || '';
   if (!all && root) all = [...root.querySelectorAll(':scope > Layer > Name')].map((n) => n.textContent.trim()).join(',');
   const queryAll = layers.filter((l) => l.queryable).map((l) => l.name).join(',');
-  const res = { version, format, infoFormat, title, crs, layers, all, queryAll };
+  // citace: Attribution kořenové vrstvy, jinak poskytovatel služby
+  const attr = cleanAttr(root?.querySelector(':scope > Attribution > Title')?.textContent
+    || xml.querySelector('Service ContactOrganization')?.textContent || '');
+  const res = { version, format, infoFormat, title, crs, layers, all, queryAll, attr };
   wmsCapCache.set(base, res);
   return res;
 }
@@ -6598,7 +7004,10 @@ function renderDataPanel() {
   go.addEventListener('click', run);
   u.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') run(); });
   root.appendChild(cu);
-  root.appendChild(el('p', 'muted small pad', 'Mapové podklady: © ČÚZK. Na server se posílá jen výřez okolí modelu, model zůstává v zařízení.'));
+  const src = dataAttribution(false);
+  root.appendChild(el('p', 'muted small pad', src.length
+    ? `Zdroje dat: ${src.join(' · ')}. Na server se posílá jen výřez okolí modelu, model zůstává v zařízení.`
+    : 'Podklady poskytují ČÚZK (ČÚZK, rok; licence CC BY 4.0), statutární město Brno a provozovatelé vlastních služeb. Na server se posílá jen výřez okolí modelu, model zůstává v zařízení.'));
 }
 /* po načtení modelu: znovu vytvořit vrstvy pro nový výřez */
 function dataOnModelLoaded() {
@@ -6695,14 +7104,14 @@ async function openMainBlob(blob, name, key, opts = {}) {
   // nový model = nová sestava; podkladové modely zůstávají jen při přepnutí hlavního
   if (!opts.keepRefs) [...(S.refs || [])].forEach((R) => removeRef(R, true));
   $('#sample-badge').hidden = true;
-  await loadIfc(await blob.arrayBuffer(), name);
+  await loadIfc(blob, name);
   if (S.modelID == null || S.fileName !== name) return false;
   S.mainBlob = blob;
   S.mainKey = key || recentKey(name, blob.size);
   if (!key) recentSave(blob, name, S.meta?.projectName).then(() => { if (!$('#panel-model').hidden) renderModelPanel(); });
   else { recentDb.get(key).then((r) => { if (r) { r.opened = Date.now(); recentDb.put(r).then(recentRefresh); } }).catch(() => {}); }
   saveLastSet();
-  if (blob.size / 1048576 > 150) toast('Velký model: pokud se iPad zpomalí, vypněte hrany nebo skryjte část podlaží.');
+  if (S.bigChunks && blob.size > BIG_FILE) toast('Velký model: kvůli plynulosti se kreslí bez hran a se stínováním po ploškách.');
   return true;
 }
 async function openRecent(key, asRef) {

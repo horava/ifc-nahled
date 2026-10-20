@@ -202,6 +202,10 @@ button { font: inherit; color: inherit; }
 .pivot { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; border: 2px solid var(--sel);
   background: color-mix(in srgb, var(--sel) 25%, transparent); box-shadow: 0 0 0 2px var(--panel); pointer-events: none; z-index: 2; }
 .pivot::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: var(--sel); }
+/* citace mapových podkladů ve 3D */
+.data-attr { position: absolute; right: 10px; bottom: 82px; z-index: 3; max-width: min(60%, 420px); padding: 3px 8px; border-radius: 6px;
+  background: var(--glass); color: var(--muted); font-size: 11px; line-height: 1.35; pointer-events: none; text-align: right; }
+@media (max-width: 719px) { .data-attr { bottom: auto; top: 58px; right: 8px; max-width: 70%; } }
 /* measurement overlay */
 .overlay { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 2; }
 .mdot { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: var(--sel); border: 2px solid var(--panel); box-sizing: border-box; }
@@ -654,6 +658,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             <span>Ze složky Soubory, iCloudu nebo OneDrivu. Model se zpracuje přímo v zařízení.</span>
           </div>
         <div class="overlay" id="overlay"></div>
+        <div class="data-attr" id="data-attr" hidden></div>
           <div class="card legend" id="legend" hidden>
             <div class="lg-head">
               <button class="lg-title" id="lg-title" type="button"></button>
@@ -989,6 +994,8 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
               <li><b>Info o místě</b>: po zapnutí ťukni do modelu nebo půdorysu a ukážou se atributy vrstev v tom místě.</li>
             </ul>
             <p class="help-note">Služba musí povolovat přístup z jiných webů (CORS), jinak ji prohlížeč nenačte. Službě se posílá jen výřez okolí modelu, ne model.</p>
+            <h4>Citace zdrojů</h4>
+            <p>Zdroje zobrazených podkladů se vypisují vpravo dole ve 3D pohledu, v záložce Data a v uloženém obrázku půdorysu. U nabídky jsou to ČÚZK (ve tvaru „ČÚZK, rok“), ČÚZK – DMVS s daty digitálních technických map krajů a statutární město Brno. U vlastní služby se převezme údaj z jejího popisu (ArcGIS copyrightText, WMS Attribution nebo poskytovatel), jinak adresa serveru.</p>
           </section>
 
           <section data-sec="multi" hidden>
@@ -1036,7 +1043,8 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
           <section data-sec="tips" hidden>
             <h3>Tipy a problémy</h3>
             <dl class="help-dl">
-              <dt>Velký model se nenačte</dt><dd>Modely o stovkách MB mohou překročit paměť Safari. Pomůže vypnout Hrany, skrýt část podlaží nebo zavřít ostatní panely Safari.</dd>
+              <dt>Velké modely</dt><dd>Modely s tisíci prvků se kreslí sloučeně po podlažích a materiálech, aby pohyb zůstal plynulý; hrany se u nich nekreslí. Soubory nad 60 MB se navíc stínují po ploškách (šetří paměť). Při načítání se ukazuje průběh.</dd>
+              <dt>Velký model se nenačte</dt><dd>Soubor o stovkách MB potřebuje kolem 1 GB paměti. Na iPadech se 4 GB RAM ho Safari může zavřít. Pomůže zavřít ostatní panely Safari a aplikace, nebo model v autorském programu rozdělit (např. po profesích) a načíst části jako podkladové modely.</dd>
               <dt>Soubor .ifczip</dt><dd>Je potřeba ho nejdřív rozbalit, třeba v aplikaci Soubory.</dd>
               <dt>Mapová služba nejde přidat</dt><dd>Služba nejspíš nepovoluje přístup z jiných webů (CORS), nebo jde o službu, která není veřejná.</dd>
               <dt>Model je na mapě jinde</dt><dd>Podívej se do záložky Geo na kontroly georeference. Častá příčina je chybějící jednotka mapy nebo prohozené souřadnice.</dd>
@@ -1073,7 +1081,15 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             </ul>
             <pre class="lic-text" id="lic-text" tabindex="0" hidden></pre>
             <p class="small muted">web-ifc je použitý beze změn; zdrojový kód: <a href="https://github.com/ThatOpen/engine_web-ifc" target="_blank" rel="noopener">github.com/ThatOpen/engine_web-ifc</a></p>
-            <p class="small muted">Mapy, výškové modely a data načtená v záložce Data nejsou součástí aplikace a řídí se podmínkami svých poskytovatelů (např. © ČÚZK, statutární město Brno). Ukázkový pavilon je smyšlený model.</p>
+            <h4>Mapové podklady a data</h4>
+            <p class="small">Mapy, výškové modely a data načtená v záložce Data nejsou součástí aplikace. Řídí se podmínkami svých poskytovatelů:</p>
+            <ul class="small">
+              <li><b>ČÚZK</b> (ortofoto, ZTM, ZABAGED, katastrální mapa, RÚIAN, DMR 5G, DMP 1G): otevřená data pod licencí CC BY 4.0, citace „ČÚZK, rok“.</li>
+              <li><b>Digitální mapa veřejné správy (DMVS)</b>: služby ČÚZK, které zpřístupňují data digitálních technických map krajů.</li>
+              <li><b>Statutární město Brno</b>: 3D model budov (LoD2).</li>
+              <li><b>Vlastní služby</b>: podle podmínek jejich provozovatele.</li>
+            </ul>
+            <p class="small muted">Ukázkový pavilon je smyšlený model.</p>
           </section>
 
         </div>
