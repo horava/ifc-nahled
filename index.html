@@ -500,6 +500,23 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
 .dl-pre { margin: 0 16px 8px; padding: 8px; border-radius: 8px; background: var(--ground); font: 12px/1.4 var(--f-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
 .dl { font: 600 11.5px var(--f-body); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
 .dl-pin { fill: #d03b3b; stroke: var(--panel); stroke-width: 2.5; }
+
+/* modely a nedávné */
+.md-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 4px 8px 4px 8px; min-height: 48px; }
+.md-row .dl-name .lg-sw { display: inline-block; vertical-align: -2px; margin-right: 6px; }
+.md-dot { width: 44px; height: 44px; display: grid; place-items: center; }
+.md-dot.main::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); }
+.md-acts { display: flex; gap: 4px; align-items: center; }
+.md-add-row, .rc-set-row { padding-top: 4px; padding-bottom: 8px; }
+.md-add { display: inline-flex; align-items: center; cursor: pointer; }
+.rc-list { display: grid; }
+.rc-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 6px; padding: 0 8px 0 0; border-top: 1px solid var(--line); }
+.rc-row.on .row-label { color: var(--accent); }
+.rc-open { display: grid; gap: 1px; text-align: left; min-height: 52px; padding: 6px 8px 6px 16px; border: 0; background: none; color: var(--ink); font: inherit; cursor: pointer; min-width: 0; }
+.rc-open:hover:not(:disabled) { background: var(--hover); }
+.rc-open:disabled { cursor: default; }
+.rc-open .row-label, .rc-open .row-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ref-badge { background: color-mix(in srgb, var(--tint, #2a78d6) 18%, transparent); color: var(--ink); }
 @media (max-width: 719px) { .fld-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 719px) {
   :root { --panel-w: 100%; }
@@ -695,6 +712,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
   <div class="drop" id="drop" hidden>Pusťte sem IFC nebo BCF soubor</div>
   <input class="sr-only" id="bcf-input" type="file">
   <input class="sr-only" id="cmp-input" type="file">
+  <input class="sr-only" id="ref-input" type="file">
 
   <div class="modal" id="about-modal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title">

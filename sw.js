@@ -1,6 +1,6 @@
 // IFC prohlížečka – offline cache.
 // Po každé změně souborů zvyšte VERSION, aby si iPad stáhl novou verzi.
-const VERSION = 'ifc-nahled-v30';
+const VERSION = 'ifc-nahled-v31';
 const FILES = [
   './',
   'index.html',
