@@ -5082,6 +5082,10 @@ const DATA_CATALOG = [
     { key: 'zabaged', name: 'ZABAGED polohopis', note: 'ČÚZK, s atributy', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_POLOHOPIS/MapServer`, format: 'png32', transparent: true, identify: true } },
     { key: 'vrst', name: 'Vrstevnice', note: 'ČÚZK ZABAGED', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_VRSTEVNICE/MapServer`, format: 'png32', transparent: true } },
   ] },
+  { group: 'Digitální technická mapa (DMVS)', items: [
+    { key: 'dtm_ti', name: 'DTM – technická infrastruktura', note: 'ČÚZK DMVS, veřejná část, WMS 1.3.0', src: { type: 'wms', url: 'https://dmvs.cuzk.gov.cz/api/wms/dtm_ti_ver', layers: '*', version: '1.3.0' } },
+    { key: 'dtm_di', name: 'DTM – dopravní infrastruktura', note: 'ČÚZK DMVS, WMS 1.3.0', src: { type: 'wms', url: 'https://dmvs.cuzk.gov.cz/api/wms/dtm_di_ver', layers: '*', version: '1.3.0' } },
+  ] },
   { group: 'Terén', items: [
     { key: 'dmr5g', name: 'Terén DMR 5G', note: 'ČÚZK, mřížka 2 m, mapy a vektory se na něj položí', src: { type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmr5g/ImageServer`, cell: 2 } },
     { key: 'dmp1g', name: 'Povrch DMP 1G', note: 'ČÚZK, včetně budov a vegetace', src: { type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmp1g/ImageServer`, cell: 1 } },
@@ -5161,7 +5165,9 @@ function imageUrl(src, F, X) {
   const bbox = [X.e0, X.n0, X.e1, X.n1].map((v) => v.toFixed(3)).join(',');
   if (src.type === 'wms') {
     const sep = src.url.includes('?') ? '&' : '?';
-    return `${src.url}${sep}${qs({ SERVICE: 'WMS', VERSION: '1.1.1', REQUEST: 'GetMap', LAYERS: src.layers || '', STYLES: '', SRS: `EPSG:${F.sr}`, BBOX: bbox, WIDTH: X.W, HEIGHT: X.H, FORMAT: src.format || 'image/png', TRANSPARENT: 'TRUE' })}`;
+    const v13 = String(src.version || '1.1.1').startsWith('1.3');
+    // projektované systémy (5514, UTM, 3857) mají ve WMS 1.3.0 pořadí os E, N jako 1.1.1
+    return `${src.url}${sep}${qs({ SERVICE: 'WMS', VERSION: v13 ? '1.3.0' : '1.1.1', REQUEST: 'GetMap', LAYERS: src.layers || '', STYLES: '', [v13 ? 'CRS' : 'SRS']: `EPSG:${F.sr}`, BBOX: bbox, WIDTH: X.W, HEIGHT: X.H, FORMAT: src.format || 'image/png', TRANSPARENT: 'TRUE' })}`;
   }
   if (src.type === 'agsimg') {
     return `${src.url}/exportImage?${qs({ bbox, bboxSR: F.sr, imageSR: F.sr, size: `${X.W},${X.H}`, format: 'jpgpng', f: 'image' })}`;
@@ -5219,6 +5225,11 @@ async function loadDataLayer(L) {
       L.i3s = await loadI3S(L, F, X, () => token === L.token);
       if (token !== L.token) return;
     } else {
+      if (L.src.type === 'wms' && (!L.src.layers || L.src.layers === '*')) {
+        const cap = await wmsCaps(L.src.url);
+        Object.assign(L.src, { layers: cap.all || cap.layers.map((l) => l.name).join(','), version: cap.version, format: cap.format, infoFormat: cap.infoFormat, queryable: cap.queryAll });
+        saveDataLayers();
+      }
       const img = await loadImage(imageUrl(L.src, F, X));
       if (token !== L.token) return;
       L.img = img; L.ext = X;
@@ -5581,7 +5592,7 @@ function buildDataLayer(L) {
 function rebuildDataLayers() { D.layers.forEach((L) => { if (L.state === 'ok') buildDataLayer(L); }); updateDataMarker(); requestRender(); markPlanDirty(0); }
 function reloadDataLayers() { D.layers.filter((L) => L.visible).forEach((L) => { L.img = null; L.features = null; L.dem = null; L.i3s = null; loadDataLayer(L); }); }
 function addDataLayer(def) {
-  if (D.layers.some((l) => l.src.url === def.src.url && l.src.type === def.src.type && (l.src.layers || '') === (def.src.layers || ''))) { toast('Tato vrstva už je přidaná.'); return; }
+  if (D.layers.some((l) => l.src.url === def.src.url && l.src.type === def.src.type && (def.src.layers === '*' || (l.src.layers || '') === (def.src.layers || '')))) { toast('Tato vrstva už je přidaná.'); return; }
   const L = { id: ++D.seq, name: def.name, note: def.note || '', src: { ...def.src }, visible: true, opacity: def.src.type === 'agsfeat' ? 1 : (def.opacity ?? 1), state: 'idle' };
   if (def.src.type === 'agsterrain') D.layers.unshift(L); else D.layers.push(L); // terén patří dospod
   saveDataLayers();
@@ -5757,8 +5768,21 @@ async function dataIdentify(E, N, extra) {
       const X = L.ext;
       const i = Math.round((E - X.e0) / (X.e1 - X.e0) * X.W), jy = Math.round((X.n1 - N) / (X.n1 - X.n0) * X.H);
       const sep = L.src.url.includes('?') ? '&' : '?';
-      const url = `${L.src.url}${sep}${qs({ SERVICE: 'WMS', VERSION: '1.1.1', REQUEST: 'GetFeatureInfo', LAYERS: L.src.layers, QUERY_LAYERS: L.src.queryable, STYLES: '', SRS: `EPSG:${F.sr}`, BBOX: `${X.e0},${X.n0},${X.e1},${X.n1}`, WIDTH: X.W, HEIGHT: X.H, X: i, Y: jy, INFO_FORMAT: 'text/plain', FEATURE_COUNT: 5 })}`;
-      try { const r = await fetch(url, { mode: 'cors' }); const t = (await r.text()).trim(); if (t) res.push({ layer: L.name, text: t.slice(0, 3000) }); } catch (e) { res.push({ layer: L.name, text: 'Služba informace neposkytla.' }); }
+      const v13 = String(L.src.version || '1.1.1').startsWith('1.3');
+      const fmt = L.src.infoFormat || 'text/plain';
+      const url = `${L.src.url}${sep}${qs({ SERVICE: 'WMS', VERSION: v13 ? '1.3.0' : '1.1.1', REQUEST: 'GetFeatureInfo', LAYERS: L.src.layers, QUERY_LAYERS: L.src.queryable, STYLES: '', [v13 ? 'CRS' : 'SRS']: `EPSG:${F.sr}`, BBOX: `${X.e0},${X.n0},${X.e1},${X.n1}`, WIDTH: X.W, HEIGHT: X.H, [v13 ? 'I' : 'X']: i, [v13 ? 'J' : 'Y']: jy, INFO_FORMAT: fmt, FEATURE_COUNT: 5 })}`;
+      try {
+        const r = await fetch(url, { mode: 'cors' });
+        const t = (await r.text()).trim();
+        if (/json/i.test(fmt)) {
+          const j = JSON.parse(t);
+          (j.features || []).slice(0, 8).forEach((f) => res.push({ layer: `${L.name}${f.id ? `: ${f.id}` : ''}`, rows: attrRows(f.properties) }));
+        } else if (/html|xml|gml/i.test(fmt)) {
+          const d = new DOMParser().parseFromString(t, /html/i.test(fmt) ? 'text/html' : 'text/xml');
+          const tx = (d.body || d.documentElement)?.textContent?.replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+          if (tx) res.push({ layer: L.name, text: tx.slice(0, 3000) });
+        } else if (t) res.push({ layer: L.name, text: t.slice(0, 3000) });
+      } catch (e) { res.push({ layer: L.name, text: 'Služba informace neposkytla.' }); }
     }
     if (D.infoRes === res) renderDataPanel();
   }
@@ -5811,30 +5835,57 @@ async function inspectService(raw) {
     if (canQuery) (info.layers || []).filter((l) => !l.subLayerIds?.length).slice(0, 60).forEach((l) => out.push({ name: l.name, note: 'vektory s atributy', src: { type: 'agsfeat', url: `${base}/${l.id}` }, custom: true }));
     return out;
   }
-  // WMS: GetCapabilities
+  // WMS (1.3.0 i 1.1.1)
   const base = url.replace(/\?.*$/, '');
-  const capUrl = `${base}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.1.1`;
-  let txt;
-  try { const r = await fetch(capUrl, { mode: 'cors' }); txt = await r.text(); } catch (e) {
-    const err = new Error('Popis služby (GetCapabilities) nejde načíst – služba nejspíš nepovoluje přístup z jiné aplikace (CORS). Můžete zkusit zadat názvy vrstev ručně.');
-    err.manual = base; throw err;
-  }
-  const xml = new DOMParser().parseFromString(txt, 'text/xml');
-  if (!xml.querySelector('Capability')) { const err = new Error('Na adrese není WMS ani ArcGIS služba.'); err.manual = base; throw err; }
+  const cap = await wmsCaps(base);
   const F = dataFrame();
-  const srsAll = [...xml.querySelectorAll('Layer > SRS, Layer > CRS')].map((n) => n.textContent.trim().toUpperCase());
-  const okSrs = !F || srsAll.some((s) => s.split(/\s+/).includes(`EPSG:${F.sr}`));
-  const svcTitle = xml.querySelector('Service > Title')?.textContent?.trim() || 'WMS';
   const out = [];
-  const layers = [...xml.querySelectorAll('Layer')].filter((n) => n.querySelector(':scope > Name'));
-  for (const n of layers.slice(0, 80)) {
-    const name = n.querySelector(':scope > Name').textContent.trim();
-    const title = n.querySelector(':scope > Title')?.textContent?.trim() || name;
-    const q = n.getAttribute('queryable') === '1';
-    out.push({ name: title, note: `WMS · ${svcTitle}`, src: { type: 'wms', url: base, layers: name, queryable: q ? name : '' }, custom: true });
-  }
-  if (!okSrs) out.warn = `Služba v popisu neuvádí souřadnicový systém EPSG:${F.sr}. Mapa se nemusí zobrazit.`;
+  const common = { type: 'wms', url: base, version: cap.version, format: cap.format, infoFormat: cap.infoFormat };
+  if (cap.all) out.push({ name: `${cap.title} – všechny vrstvy`, note: `WMS ${cap.version}`, src: { ...common, layers: cap.all, queryable: cap.queryAll } });
+  for (const l of cap.layers.slice(0, 80)) out.push({ name: l.title, note: `WMS ${cap.version} · ${cap.title}`, src: { ...common, layers: l.name, queryable: l.queryable ? l.name : '' } });
+  if (F && !cap.crs.includes(`EPSG:${F.sr}`)) out.warn = `Služba v popisu neuvádí souřadnicový systém EPSG:${F.sr}. Mapa se nemusí zobrazit.`;
   return out;
+}
+/* popis WMS služby: zkusí verzi 1.3.0, pak 1.1.1 */
+const wmsCapCache = new Map();
+async function wmsCaps(base) {
+  if (wmsCapCache.has(base)) return wmsCapCache.get(base);
+  let xml = null, lastErr = null;
+  for (const ver of ['1.3.0', '1.1.1']) {
+    try {
+      const r = await fetch(`${base}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=${ver}`, { mode: 'cors' });
+      const t = await r.text();
+      const x = new DOMParser().parseFromString(t, 'text/xml');
+      if (x.querySelector('Capability')) { xml = x; break; }
+      const ex = x.querySelector('ServiceException, ExceptionText')?.textContent?.trim();
+      lastErr = ex ? `Služba hlásí: ${ex}` : `Služba nevrátila popis WMS (odpověď ${r.status}).`;
+    } catch (e) { lastErr = lastErr || 'CORS'; }
+  }
+  if (!xml) {
+    const err = new Error(lastErr === 'CORS'
+      ? 'Popis služby (GetCapabilities) nejde načíst – služba nejspíš nepovoluje přístup z jiné aplikace (CORS). Můžete zkusit zadat názvy vrstev ručně.'
+      : `${lastErr || 'Na adrese není WMS ani ArcGIS služba.'} Můžete zkusit zadat názvy vrstev ručně.`);
+    err.manual = base;
+    throw err;
+  }
+  const txt = (sel) => [...xml.querySelectorAll(sel)].map((n) => n.textContent.trim());
+  const pick = (list, pref) => pref.find((f) => list.includes(f)) || list[0] || '';
+  const version = xml.documentElement.getAttribute('version') || '1.1.1';
+  const format = pick(txt('Capability > Request > GetMap > Format'), ['image/png', 'image/png; mode=8bit', 'image/png8', 'image/png32', 'image/jpeg']) || 'image/png';
+  const infoFormat = pick(txt('Capability > Request > GetFeatureInfo > Format'), ['application/json', 'application/geo+json', 'text/plain', 'text/html', 'application/vnd.ogc.gml', 'text/xml']);
+  const title = xml.querySelector('Service > Title')?.textContent?.trim() || 'WMS';
+  const crs = txt('Layer > SRS, Layer > CRS').flatMap((x) => x.toUpperCase().split(/\s+/));
+  const named = [...xml.querySelectorAll('Layer')].filter((n) => n.querySelector(':scope > Name'));
+  const layers = named.map((n) => ({ name: n.querySelector(':scope > Name').textContent.trim(), title: n.querySelector(':scope > Title')?.textContent?.trim() || '', queryable: n.getAttribute('queryable') === '1' }))
+    .map((l) => ({ ...l, title: l.title || l.name }));
+  // „všechny vrstvy“: pojmenovaná kořenová vrstva, jinak pojmenované vrstvy první úrovně
+  const root = xml.querySelector('Capability > Layer');
+  let all = root?.querySelector(':scope > Name')?.textContent?.trim() || '';
+  if (!all && root) all = [...root.querySelectorAll(':scope > Layer > Name')].map((n) => n.textContent.trim()).join(',');
+  const queryAll = layers.filter((l) => l.queryable).map((l) => l.name).join(',');
+  const res = { version, format, infoFormat, title, crs, layers, all, queryAll };
+  wmsCapCache.set(base, res);
+  return res;
 }
 
 /* ---------- panel Data ---------- */
@@ -5971,7 +6022,7 @@ function renderDataPanel() {
     const c = el('section', 'group');
     c.appendChild(el('h3', 'group-title', g.group));
     for (const it of g.items) {
-      const used = D.layers.some((l) => l.src.url === it.src.url && (l.src.layers || '') === (it.src.layers || ''));
+      const used = D.layers.some((l) => l.src.url === it.src.url && l.src.type === it.src.type && (it.src.layers === '*' || (l.src.layers || '') === (it.src.layers || '')));
       const b = el('button', 'dl-cat' + (used ? ' used' : ''));
       b.type = 'button';
       b.disabled = used;
@@ -6020,7 +6071,7 @@ function renderDataPanel() {
     li.placeholder = 'Názvy vrstev (LAYERS), oddělené čárkou';
     const add = el('button', 'sbtn', 'Přidat jako WMS');
     add.type = 'button';
-    add.addEventListener('click', () => { if (li.value.trim()) addDataLayer({ name: `WMS ${li.value.trim()}`, note: fd.manual, src: { type: 'wms', url: fd.manual, layers: li.value.trim() } }); });
+    add.addEventListener('click', () => { if (li.value.trim()) addDataLayer({ name: `WMS ${li.value.trim()}`, note: fd.manual, src: { type: 'wms', url: fd.manual, layers: li.value.trim(), version: '1.3.0' } }); });
     mrow.append(li, add);
     outBox.appendChild(mrow);
   }
