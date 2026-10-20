@@ -1390,21 +1390,149 @@ function rowList(title, items, onToggle, onOnly, onName) {
   return sec;
 }
 
-const APP_VERSION = '1.0';
+/* ---------- návod (otazník v horní liště), O aplikaci a licence ---------- */
 function aboutLink() {
   const b = el('button', 'link about-link', 'O aplikaci a licence');
   b.type = 'button';
   b.addEventListener('click', openAbout);
   return b;
 }
-function openAbout() {
-  $('#about-version').textContent = `verze ${APP_VERSION}`;
-  $('#lic-text').hidden = true;
-  document.querySelectorAll('.lic').forEach((x) => x.setAttribute('aria-pressed', 'false'));
-  $('#about-modal').hidden = false;
+let helpSec = 'start';
+function showHelpSec(sec) {
+  if (!document.querySelector(`#help-body > section[data-sec="${sec}"]`)) sec = 'start';
+  helpSec = sec;
+  document.querySelectorAll('#help-nav button').forEach((b) => b.setAttribute('aria-current', String(b.dataset.sec === sec)));
+  document.querySelectorAll('#help-body > section').forEach((x) => { x.hidden = x.dataset.sec !== sec; });
+  $('#help-body').scrollTop = 0;
+  const nb = document.querySelector(`#help-nav button[data-sec="${sec}"]`);
+  if (nb && !$('#help-modal').hidden) nb.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  if (sec === 'licenses') {
+    $('#lic-text').hidden = true;
+    document.querySelectorAll('.lic').forEach((x) => x.setAttribute('aria-pressed', 'false'));
+  }
 }
-$('#about-close').addEventListener('click', () => { $('#about-modal').hidden = true; });
-$('#about-modal').addEventListener('click', (e) => { if (e.target.id === 'about-modal') e.currentTarget.hidden = true; });
+// verze = číslo offline mezipaměti (ifc-nahled-vNN), které se zvyšuje s každým vydáním
+async function appVersionText() {
+  try {
+    const k = (await caches.keys()).find((x) => /^ifc-nahled-v\d+$/.test(x));
+    if (k) return `verze ${k.slice('ifc-nahled-v'.length)}`;
+  } catch (e) { /* bez service workeru */ }
+  return 'webová verze';
+}
+function openHelp(sec = helpSec) {
+  appVersionText().then((t) => { $('#about-version').textContent = t; });
+  $('#help-modal').hidden = false;
+  showHelpSec(sec);
+  $('#help-body').focus({ preventScroll: true });
+}
+function closeHelp() { $('#help-modal').hidden = true; }
+function openAbout() { openHelp('about'); }
+$('#btn-help').addEventListener('click', () => openHelp());
+$('#help-close').addEventListener('click', closeHelp);
+$('#help-modal').addEventListener('click', (e) => { if (e.target.id === 'help-modal') closeHelp(); });
+$('#help-nav').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-sec]');
+  if (b) showHelpSec(b.dataset.sec);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !$('#help-modal').hidden) closeHelp();
+});
+$('#help-tour').addEventListener('click', () => { closeHelp(); startTour(); });
+
+/* ---------- průvodce při prvním spuštění ---------- */
+const TOUR_KEY = 'ifc-nahled-tour';
+const TOUR = [
+  { title: 'Vítej v IFC prohlížečce',
+    html: '<p>Prohlížeč BIM modelů ve formátu IFC. Modely se zpracují přímo v tomto zařízení a nikam se neodesílají.</p><p>Během minuty ti ukážu to nejdůležitější. Otevřený je ukázkový pavilon, na kterém si můžeš všechno vyzkoušet.</p>',
+    next: 'Projít průvodce' },
+  { target: 'label[for="file-input"]', title: 'Otevři vlastní model',
+    html: '<p>Tlačítko nabídne soubory IFC ze Souborů, iCloudu, OneDrivu a dalších úložišť. Na počítači můžeš soubor i přetáhnout do okna.</p><p>Otevřené modely se ukládají do zařízení, příště je najdeš v panelu Model v části Nedávné modely.</p>' },
+  { target: '#viewport', pad: -10, title: 'Ovládání 3D pohledu',
+    html: '<ul><li><b>Jeden prst</b> otáčí, <b>dva prsty</b> posouvají a přibližují.</li><li><b>Ťuknutí</b> vybere prvek, další ťuknutí na stejné místo vybere prvek pod ním.</li><li><b>Dvojité ťuknutí</b> nastaví střed otáčení.</li><li>Myš: levé tlačítko otáčí, pravé posouvá, kolečko přibližuje.</li></ul>' },
+  { target: '.toolbar', title: 'Nástroje',
+    html: '<p>Pohledy <b>Celý</b>, <b>3D</b> a <b>Shora</b>, dále <b>Řez</b>, <b>Měřit</b> s přichytáváním k lomovým bodům, <b>Souřadnice</b> bodů a <b>Půdorys</b> podlaží.</p><p>Vpravo jsou akce pro vybraný prvek: zaměřit, skrýt, izolovat a znovu zobrazit vše.</p>' },
+  { target: '.panel .tabs', title: 'Panel s informacemi',
+    html: '<ul><li><b>Model</b>: podlaží, místnosti, barvení, další modely a exporty</li><li><b>Strom</b> a <b>Hledat</b>: struktura a vyhledávání ve vlastnostech</li><li><b>Vlastnosti</b> vybraného prvku</li><li><b>BCF</b> záznamy, <b>Geo</b> georeference a <b>Data</b> s mapovými podklady</li></ul>' },
+  { target: '#btn-sheet', title: 'Skrytí panelu',
+    html: '<p>Tímto tlačítkem panel schováš nebo zase ukážeš. Na telefonu vysouvá panel zespodu.</p><p>Vedle je přepínač světlého a tmavého režimu.</p>' },
+  { target: '#btn-help', title: 'Návod je vždy po ruce',
+    html: '<p>Pod otazníkem je podrobný návod ke všem funkcím, informace o aplikaci a licence. Odtud můžeš tohoto průvodce spustit znovu.</p>',
+    next: 'Začít' },
+];
+let tourI = -1;
+function startTour() {
+  tourI = 0;
+  $('#tour').hidden = false;
+  renderTour();
+}
+function endTour() {
+  tourI = -1;
+  $('#tour').hidden = true;
+  try { localStorage.setItem(TOUR_KEY, 'done'); } catch (e) { /* ignore */ }
+}
+function renderTour() {
+  const st = TOUR[tourI];
+  const last = tourI === TOUR.length - 1;
+  $('#tour-step').textContent = `${tourI + 1} / ${TOUR.length}`;
+  $('#tour-title').textContent = st.title;
+  $('#tour-text').innerHTML = st.html;
+  $('#tour-back').hidden = tourI === 0;
+  $('#tour-skip').hidden = last;
+  $('#tour-next').textContent = st.next || (last ? 'Hotovo' : 'Další');
+  placeTour();
+  requestAnimationFrame(placeTour);
+  $('#tour-next').focus({ preventScroll: true });
+}
+function placeTour() {
+  if (tourI < 0) return;
+  const st = TOUR[tourI];
+  const tour = $('#tour'), card = $('#tour-card'), spot = $('#tour-spot');
+  const vw = window.innerWidth, vh = window.innerHeight, m = 12;
+  const tEl = st.target ? document.querySelector(st.target) : null;
+  const r = tEl ? tEl.getBoundingClientRect() : null;
+  const visible = r && r.width > 4 && r.height > 4 && r.top < vh && r.bottom > 0 && getComputedStyle(tEl).visibility !== 'hidden';
+  const cw = card.offsetWidth, ch = card.offsetHeight;
+  let x, y;
+  if (!visible) {
+    spot.hidden = true;
+    tour.classList.add('no-spot');
+    x = (vw - cw) / 2; y = (vh - ch) / 2;
+  } else {
+    tour.classList.remove('no-spot');
+    spot.hidden = false;
+    const p = st.pad ?? 6;
+    const L = Math.max(4, r.left - p), T = Math.max(4, r.top - p);
+    const R = Math.min(vw - 4, r.right + p), B = Math.min(vh - 4, r.bottom + p);
+    Object.assign(spot.style, { left: `${L}px`, top: `${T}px`, width: `${R - L}px`, height: `${B - T}px` });
+    const cx = r.left + r.width / 2 - cw / 2, cy = r.top + r.height / 2 - ch / 2;
+    if (B + m + ch <= vh - m) { x = cx; y = B + m; }
+    else if (T - m - ch >= m) { x = cx; y = T - m - ch; }
+    else if (R + m + cw <= vw - m) { x = R + m; y = cy; }
+    else if (L - m - cw >= m) { x = L - m - cw; y = cy; }
+    else { x = cx; y = Math.min(B - ch - 24, vh - ch - m); } // velký cíl (3D pohled): karta uvnitř dole
+  }
+  card.style.left = `${Math.round(Math.min(Math.max(m, x), vw - cw - m))}px`;
+  card.style.top = `${Math.round(Math.min(Math.max(m, y), vh - ch - m))}px`;
+}
+$('#tour-next').addEventListener('click', () => {
+  if (tourI >= TOUR.length - 1) endTour();
+  else { tourI++; renderTour(); }
+});
+$('#tour-back').addEventListener('click', () => { if (tourI > 0) { tourI--; renderTour(); } });
+$('#tour-skip').addEventListener('click', endTour);
+window.addEventListener('resize', () => requestAnimationFrame(placeTour));
+document.addEventListener('keydown', (e) => {
+  if (tourI < 0) return;
+  if (e.key === 'Escape') { e.preventDefault(); endTour(); }
+  else if (e.key === 'ArrowRight') $('#tour-next').click();
+  else if (e.key === 'ArrowLeft' && tourI > 0) $('#tour-back').click();
+});
+function maybeStartTour() {
+  let done = false;
+  try { done = localStorage.getItem(TOUR_KEY) === 'done'; } catch (e) { done = true; }
+  if (done || tourI >= 0 || !$('#help-modal').hidden) return;
+  setTimeout(() => { if (tourI < 0 && $('#help-modal').hidden) startTour(); }, 500);
+}
 document.querySelectorAll('.lic').forEach((b) => b.addEventListener('click', async () => {
   const pre = $('#lic-text');
   document.querySelectorAll('.lic').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
@@ -6974,6 +7102,7 @@ if (matchMedia('(max-width: 719px)').matches) app.classList.remove('sheet-open')
     hideLoading();
     $('#empty-hint').hidden = false;
   }
+  maybeStartTour();
 })();
 window.__ifc = S;
 window.__ifcView = { camera, dataGroup, renderer, renderFrame, scene, findSnap, toScreen };

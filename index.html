@@ -11,7 +11,7 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="IFC prohlížečka">
-<link rel="manifest" href="manifest.webmanifest">
+<link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials">
 <link rel="icon" href="icons/icon-192.png" type="image/png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <link rel="stylesheet" href="fonts/fonts.css">
@@ -330,6 +330,55 @@ button { font: inherit; color: inherit; }
 .lic[aria-pressed="true"] { border-color: var(--accent); }
 .lic-text { margin: 0; max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--f-mono); font-size: 11.5px; line-height: 1.5; padding: 12px; border-radius: 10px; background: var(--ground); border: 1px solid var(--line); }
 .about-link { justify-self: start; margin: 4px 16px 16px; }
+/* návod */
+.modal-card.help-card { width: min(920px, 100%); height: min(760px, 100%); }
+.help-wrap { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+.help-nav { display: flex; flex-direction: column; gap: 1px; padding: 8px; border-right: 1px solid var(--line); overflow-y: auto; background: var(--ground); }
+.help-group { padding: 12px 10px 4px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.help-group:first-child { padding-top: 4px; }
+.help-nav button { text-align: left; min-height: 38px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); cursor: pointer; font-size: 14px; flex: none; }
+.help-nav button:hover { background: var(--hover); }
+.help-nav button[aria-current="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); font-weight: 600; }
+.help-body { overflow-y: auto; padding: 18px 24px 28px; outline: none; }
+.help-body h3 { margin: 0 0 10px; font-family: var(--f-display); font-size: 22px; font-weight: 600; }
+.help-body h4 { margin: 18px 0 6px; font-size: 15px; font-weight: 600; }
+.help-body p { margin: 0 0 10px; }
+.help-body ul { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 6px; }
+.help-body .lic-list { padding-left: 0; }
+.help-dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; margin: 0 0 10px; }
+.help-dl dt { font-weight: 600; }
+.help-dl dd { margin: 0; color: var(--ink); }
+.help-table { border-collapse: collapse; width: 100%; margin: 0 0 12px; font-size: 14px; }
+.help-table th, .help-table td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.help-table th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+.help-note { padding: 10px 12px; border-radius: 10px; background: var(--ground); border: 1px solid var(--line); font-size: 13.5px; }
+.help-sw { white-space: nowrap; font-weight: 600; padding: 0 5px; border-radius: 5px; color: var(--panel); }
+.help-sw.v { background: var(--info); }
+.help-sw.h { background: var(--ok); }
+@media (max-width: 719px) {
+  .modal-card.help-card { height: 100%; }
+  .help-wrap { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .help-nav { flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; gap: 6px; }
+  .help-group { display: none; }
+  .help-nav button { white-space: nowrap; border: 1px solid var(--line); border-radius: 999px; min-height: 34px; padding: 0 12px; font-size: 13px; background: var(--panel); }
+  .help-body { padding: 14px 16px 24px; }
+  .help-dl { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .help-dl dd { margin-bottom: 8px; }
+}
+/* průvodce při prvním spuštění */
+.tour { position: fixed; inset: 0; z-index: 40; }
+.tour.no-spot { background: rgba(10, 14, 13, 0.55); }
+.tour-spot { position: fixed; border-radius: 12px; box-shadow: 0 0 0 9999px rgba(10, 14, 13, 0.55); outline: 2px solid var(--accent); outline-offset: 2px;
+  transition: left 0.25s ease, top 0.25s ease, width 0.25s ease, height 0.25s ease; pointer-events: none; }
+.tour-card { position: fixed; width: min(380px, calc(100vw - 32px)); box-sizing: border-box; padding: 16px 18px 12px; border-radius: 16px; background: var(--panel); color: var(--ink);
+  border: 1px solid var(--line); box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3); display: grid; gap: 8px; }
+.tour-step { font-family: var(--f-mono); font-size: 12px; color: var(--muted); }
+.tour-title { margin: 0; font-family: var(--f-display); font-size: 20px; font-weight: 600; }
+.tour-text p { margin: 0 0 6px; font-size: 14.5px; }
+.tour-text ul { margin: 0 0 6px; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+.tour-foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.tour-foot .grow { flex: 1; }
+@media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
 /* georeference */
 .flag { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-left: 4px; vertical-align: 2px; }
 .geo-status { display: flex; align-items: center; gap: 8px; font-family: var(--f-display); font-weight: 600; font-size: 18px; }
@@ -553,6 +602,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
     box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18); transition: transform 0.25s ease; }
   #app:not(.sheet-open) .panel { transform: translateY(calc(100% + 24px)); visibility: hidden; }
   .brand-name { font-size: 18px; }
+  .bar { gap: 8px; }
   .file { display: none; }
   .open-label { display: none; }
   .btn.primary { padding: 0 12px; }
@@ -560,6 +610,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
   .clip-pop .sbtn { padding: 0 9px; }
 }
 @media (min-width: 720px) { .file { display: block; } }
+@media (max-width: 430px) { .brand-name { display: none; } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } .panel { transition: none !important; } }
 </style>
 
@@ -575,6 +626,9 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
       <span class="brand-name">IFC prohlížečka</span>
     </div>
     <span class="file" id="file-name"></span>
+    <button class="btn icon" id="btn-help" type="button" aria-label="Návod" title="Návod">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.8"/><path d="M12 17.2v.1"/></svg>
+    </button>
     <button class="btn icon" id="btn-theme" type="button" aria-label="Přepnout na tmavý režim" title="Přepnout na tmavý režim">
       <svg class="i-moon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg>
       <svg class="i-sun" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/></svg>
@@ -747,30 +801,297 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
   <input class="sr-only" id="cmp-input" type="file">
   <input class="sr-only" id="ref-input" type="file">
 
-  <div class="modal" id="about-modal" hidden>
-    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="about-title">
+  <div class="modal" id="help-modal" hidden>
+    <div class="modal-card help-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
       <div class="modal-head">
-        <h2 class="modal-title" id="about-title">O aplikaci</h2>
-        <button class="ib" id="about-close" type="button" aria-label="Zavřít"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        <h2 class="modal-title" id="help-title">Návod</h2>
+        <button class="ib" id="help-close" type="button" aria-label="Zavřít"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
       </div>
-      <div class="modal-body about">
-        <p><strong>IFC prohlížečka</strong> <span class="muted" id="about-version"></span><br>
-        Prohlížeč IFC modelů. Modely se zpracují přímo v tomto zařízení a nikam se neodesílají.</p>
-        <p class="small muted">© 2026 autoři IFC prohlížečky · licence MIT · software je poskytován „tak, jak je“, bez záruky.</p>
-        <h3 class="group-title flush">Použité knihovny</h3>
-        <ul class="lic-list">
-          <li><button class="lic" type="button" data-file="licenses/three.js-MIT.txt"><b>three.js</b> 0.180.0<span>MIT</span></button></li>
-          <li><button class="lic" type="button" data-file="licenses/web-ifc-MPL-2.0.txt"><b>web-ifc</b> 0.0.77<span>MPL-2.0</span></button></li>
-          <li><button class="lic" type="button" data-file="licenses/fflate-MIT.txt"><b>fflate</b> 0.8.2<span>MIT</span></button></li>
-          <li><button class="lic" type="button" data-file="licenses/proj4-MIT.txt"><b>proj4js</b> 2.19.10<span>MIT</span></button></li>
-          <li><button class="lic" type="button" data-file="licenses/mgrs-MIT.txt"><b>mgrs</b> 1.0.0<span>MIT</span></button></li>
-          <li><button class="lic" type="button" data-file="licenses/wkt-parser-MIT.txt"><b>wkt-parser</b> 1.6.0<span>MIT</span></button></li>
-          <li><button class="lic" type="button" data-file="licenses/lerc-Apache-2.0.txt"><b>lerc</b> 4.0.4<span>Apache-2.0</span></button></li>
-          <li><button class="lic" type="button" data-file="licenses/IBM-Plex-OFL-1.1.txt"><b>IBM Plex</b> písma<span>OFL 1.1</span></button></li>
-          <li><button class="lic" type="button" data-file="LICENSE"><b>IFC prohlížečka</b> vlastní kód<span>MIT</span></button></li>
-        </ul>
-        <p class="small muted">web-ifc je použitý beze změn; zdrojový kód: <a href="https://github.com/ThatOpen/engine_web-ifc" target="_blank" rel="noopener">github.com/ThatOpen/engine_web-ifc</a></p>
-        <pre class="lic-text" id="lic-text" tabindex="0" hidden></pre>
+      <div class="help-wrap">
+        <nav class="help-nav" id="help-nav" aria-label="Kapitoly návodu">
+          <span class="help-group">Základy</span>
+          <button type="button" data-sec="start">Začínáme</button>
+          <button type="button" data-sec="view">Ovládání pohledu</button>
+          <button type="button" data-sec="select">Výběr a vlastnosti</button>
+          <button type="button" data-sec="model">Panel Model a Strom</button>
+          <span class="help-group">Nástroje</span>
+          <button type="button" data-sec="search">Hledání a filtry</button>
+          <button type="button" data-sec="color">Barvení místností</button>
+          <button type="button" data-sec="clip">Řezy a půdorys</button>
+          <button type="button" data-sec="measure">Měření a souřadnice</button>
+          <span class="help-group">Geodata</span>
+          <button type="button" data-sec="geo">Georeference</button>
+          <button type="button" data-sec="data">Mapy a data</button>
+          <span class="help-group">Více modelů a spolupráce</span>
+          <button type="button" data-sec="multi">Více modelů</button>
+          <button type="button" data-sec="compare">Porovnání verzí</button>
+          <button type="button" data-sec="bcf">BCF záznamy</button>
+          <button type="button" data-sec="export">Exporty</button>
+          <span class="help-group">Další</span>
+          <button type="button" data-sec="tips">Tipy a problémy</button>
+          <button type="button" data-sec="about">O aplikaci</button>
+          <button type="button" data-sec="licenses">Licence</button>
+        </nav>
+        <div class="help-body" id="help-body" tabindex="-1">
+
+          <section data-sec="start" hidden>
+            <h3>Začínáme</h3>
+            <p>IFC prohlížečka zobrazí BIM model ve formátu IFC (IFC2x3, IFC4, IFC4.3) přímo v prohlížeči. Model se zpracuje v tomto zařízení a nikam se neodesílá.</p>
+            <h4>Otevření modelu</h4>
+            <ul>
+              <li>Oranžové tlačítko <b>Otevřít IFC</b> vpravo nahoře nabídne Soubory, iCloud, OneDrive, SharePoint a další úložiště.</li>
+              <li>Na počítači můžeš soubor IFC nebo BCF také přetáhnout do okna aplikace.</li>
+              <li>Po prvním spuštění se zobrazí ukázkový pavilon, na kterém si můžeš vše vyzkoušet.</li>
+              <li>Otevřené modely se ukládají do zařízení (posledních 8). V panelu Model je najdeš v části <b>Nedávné modely v zařízení</b> a otevřeš je jedním ťuknutím i bez internetu.</li>
+            </ul>
+            <h4>Rozvržení</h4>
+            <ul>
+              <li><b>Vlevo</b> je 3D pohled, pod ním lišta nástrojů.</li>
+              <li><b>Vpravo</b> je panel se záložkami Model, Strom, Hledat, Vlastnosti, BCF, Geo a Data. Skryješ ho tlačítkem s obdélníčkem v horní liště. Na telefonu vyjíždí zespodu.</li>
+              <li>V horní liště je dále <b>?</b> (tento návod) a přepínač světlého a tmavého režimu. Výchozí režim se řídí nastavením zařízení.</li>
+            </ul>
+            <h4>Instalace na iPad</h4>
+            <p>V Safari otevři adresu aplikace, počkej na načtení ukázky a zvol <b>Sdílet → Přidat na plochu</b>. Aplikace se pak otevírá přes celou obrazovku a funguje i bez internetu.</p>
+            <p><button class="sbtn primary" type="button" id="help-tour">Spustit průvodce znovu</button></p>
+          </section>
+
+          <section data-sec="view" hidden>
+            <h3>Ovládání pohledu</h3>
+            <table class="help-table">
+              <tr><th>Akce</th><th>Dotyk</th><th>Myš</th></tr>
+              <tr><td>Otáčení</td><td>tažení jedním prstem</td><td>tažení levým tlačítkem</td></tr>
+              <tr><td>Posun</td><td>tažení dvěma prsty</td><td>tažení pravým tlačítkem</td></tr>
+              <tr><td>Přiblížení</td><td>roztažení / stažení dvou prstů</td><td>kolečko</td></tr>
+              <tr><td>Výběr prvku</td><td>ťuknutí</td><td>klik</td></tr>
+              <tr><td>Střed otáčení</td><td>dvojité ťuknutí na bod</td><td>dvojklik</td></tr>
+            </table>
+            <p>Přiblížení míří k místu pod prsty nebo kurzorem a projde i skrz stěnu nebo řez.</p>
+            <h4>Tlačítka v liště</h4>
+            <dl class="help-dl">
+              <dt>Celý</dt><dd>zobrazí celý model</dd>
+              <dt>3D</dt><dd>šikmý pohled na model</dd>
+              <dt>Shora</dt><dd>pohled shora</dd>
+              <dt>Kolem prvku</dt><dd>když je zapnuté, pohled se otáčí kolem vybraného prvku místo středu obrazovky</dd>
+              <dt>Hrany</dt><dd>zapne nebo vypne obrysové hrany prvků (u velkých modelů vypnutí zrychlí zobrazení)</dd>
+            </dl>
+            <p>Kompas vpravo nahoře ukazuje sever: u georeferencovaného modelu sever mapy, jinak sever projektu.</p>
+          </section>
+
+          <section data-sec="select" hidden>
+            <h3>Výběr a vlastnosti</h3>
+            <ul>
+              <li>Ťuknutím vybereš prvek, zvýrazní se obrysem a jeho vlastnosti se ukážou v záložce <b>Vlastnosti</b>.</li>
+              <li>Když místnost splývá s podlahou nebo stěnou, má přednost místnost. <b>Další ťuknutí na stejné místo</b> vybere prvek pod ní, pak další.</li>
+              <li>Ťuknutí do prázdného místa výběr zruší.</li>
+            </ul>
+            <h4>Záložka Vlastnosti</h4>
+            <p>Atributy, GlobalId, materiál, všechny sady vlastností (Pset) a množství (Qto), včetně vlastností převzatých z typu. U prvku je i jeho poloha v mapových souřadnicích.</p>
+            <h4>Tlačítka pro vybraný prvek</h4>
+            <dl class="help-dl">
+              <dt>Zaměřit</dt><dd>přiblíží pohled na vybraný prvek</dd>
+              <dt>Skrýt</dt><dd>skryje vybraný prvek</dd>
+              <dt>Izolovat</dt><dd>nechá vidět jen vybraný prvek</dd>
+              <dt>Vše</dt><dd>zruší skrytí, izolaci i filtry a ukáže zase celý model</dd>
+            </dl>
+          </section>
+
+          <section data-sec="model" hidden>
+            <h3>Panel Model a Strom</h3>
+            <h4>Model</h4>
+            <ul>
+              <li>Souhrn projektu: schéma IFC, počet prvků a podlaží.</li>
+              <li><b>Zobrazit místnosti</b> zapne průhledné objemy místností (IfcSpace).</li>
+              <li><b>Podlaží</b>: oko podlaží skryje, <b>Jen toto</b> nechá jen jedno. Ťuknutím na název se ukážou vlastnosti podlaží včetně počtu a seznamu místností.</li>
+              <li><b>Kategorie</b> (stěny, desky, okna…) jde skrývat jednotlivě.</li>
+              <li>Dále tu jsou nedávné modely, další modely, barvení místností, porovnání a export do Excelu (viz další kapitoly).</li>
+            </ul>
+            <h4>Strom</h4>
+            <p>Struktura IFC: projekt → pozemek → budova → podlaží → místnosti a prvky. Ťuknutím na položku ji vybereš ve 3D, oko ji skryje. Ťuknutím na název projektu, pozemku, budovy nebo podlaží se ukážou jeho vlastnosti, například adresa nebo výška podlaží.</p>
+          </section>
+
+          <section data-sec="search" hidden>
+            <h3>Hledání a filtry</h3>
+            <ul>
+              <li>Záložka <b>Hledat</b> prohledá názvy, čísla místností, typy, materiály, GlobalId a hodnoty všech sad vlastností.</li>
+              <li><b>Filtr podle vlastnosti</b>: vyber vlastnost a podmínku (=, ≠, obsahuje, začíná na, &gt;, &lt;, je nebo není vyplněno). Text a filtr jde kombinovat.</li>
+              <li>Výsledky můžeš <b>izolovat</b>, <b>zvýraznit</b> nebo <b>skrýt</b>. Ťuknutím na výsledek se prvek vybere a pohled se na něj zaměří.</li>
+            </ul>
+          </section>
+
+          <section data-sec="color" hidden>
+            <h3>Barvení místností</h3>
+            <ul>
+              <li>V panelu Model v části <b>Barvení místností</b> vyber vlastnost místností, třeba podlaží, účel nebo číslo. Rychlé volby jsou pod výběrem.</li>
+              <li>Obarví se jen místnosti, ostatní prvky se zprůhlední. Místnosti bez hodnoty zůstanou průhledné.</li>
+              <li>Nad modelem se ukáže <b>legenda</b> se všemi hodnotami. Ťuknutím na položku zůstanou vidět jen místnosti s touto hodnotou, dalším ťuknutím se vrátí všechny.</li>
+              <li>Legendu jde sbalit šipkou, křížek barvení vypne.</li>
+              <li>Barvy fungují i v řezu a v půdorysu.</li>
+            </ul>
+          </section>
+
+          <section data-sec="clip" hidden>
+            <h3>Řezy a půdorys</h3>
+            <h4>Řez</h4>
+            <ul>
+              <li>Tlačítko <b>Řez</b> otevře panel řezu: <b>vodorovný</b>, <b>příčný</b> nebo <b>podélný</b>.</li>
+              <li>U vodorovného řezu ťukni na podlaží, řez se nastaví nad jeho podlahu. Výšku pak doladíš posuvníkem.</li>
+              <li>Svislé řezy se samy natočí podle budovy. Jdou ručně natáčet nebo zarovnat kolmo na vybraný prvek.</li>
+              <li>Panel řezu jde sbalit do malého štítku, řez přitom zůstane zapnutý.</li>
+            </ul>
+            <h4>Půdorys</h4>
+            <ul>
+              <li>Tlačítko <b>Půdorys</b> rozdělí obrazovku: na šířku je půdorys vedle 3D, na výšku pod ním. Předěl jde přetáhnout.</li>
+              <li>Výběr podlaží v půdorysu zároveň udělá ve 3D vodorovný řez.</li>
+              <li>Půdorys ukazuje polohu a směr kamery. Ťuknutím se přesuneš na místo ve výšce očí.</li>
+              <li><b>Popisky místností</b>: číslo, název, plocha.</li>
+              <li>Půdorys jde natočit severem nahoru a <b>uložit jako obrázek PNG</b> s měřítkem, severkou a legendou.</li>
+            </ul>
+          </section>
+
+          <section data-sec="measure" hidden>
+            <h3>Měření a souřadnice</h3>
+            <h4>Měřit</h4>
+            <ul>
+              <li>Ťukni na první a druhý bod. Body se přichytávají k <b>lomovým bodům</b> a <b>hranám</b> prvků, i na obrysu budovy. Zakryté body se nenabízejí.</li>
+              <li>S myší nebo Apple Pencil se místo přichycení ukazuje už při najetí: <b>čtverec</b> je lomový bod, <b>kosočtverec</b> hrana a <b>kroužek</b> plocha. Po prvním bodě se kreslí náhled celého měření.</li>
+              <li><b>Pravoúhlý trojúhelník</b> ukáže kromě přímé vzdálenosti i <span class="help-sw v">svislou ↕</span> a <span class="help-sw h">vodorovnou ↔</span>. Vypíná se tlačítkem s trojúhelníkem v liště měření.</li>
+              <li><b>Smazat</b> odstraní všechna měření, <b>Esc</b> zruší rozpracované. Měření se nikam neukládají.</li>
+            </ul>
+            <h4>Souřadnice</h4>
+            <ul>
+              <li>Každé ťuknutí uloží bod (B1, B2…) se souřadnicemi v mapovém systému modelu. U modelu bez georeference jsou to lokální souřadnice.</li>
+              <li>Body se přichytávají stejně jako při měření. <b>Kopírovat</b> vloží souřadnice do schránky oddělené tabulátorem, takže se dají vložit do Excelu.</li>
+              <li>Seznam bodů a export do CSV najdeš v záložce <b>Geo</b>.</li>
+            </ul>
+          </section>
+
+          <section data-sec="geo" hidden>
+            <h3>Georeference</h3>
+            <ul>
+              <li>Záložka <b>Geo</b> čte georeferenci z IfcMapConversion (IFC4, IFC4.3) nebo z ePSet_MapConversion (IFC2x3).</li>
+              <li>Ukazuje souřadnicový systém, posun, natočení a měřítko a <b>kontroly</b>: jednotky, znaménka a rozsah S-JTSK, shodu s polohou pozemku (RefLatitude/RefLongitude) a se severem projektu.</li>
+              <li>Když chybí jednotka mapy, aplikace ji odvodí z měřítka. Nesoulad jednotek jde jedním ťuknutím opravit (jen pro zobrazení, soubor se nemění).</li>
+              <li>S-JTSK lze zobrazovat jako E/N podle EPSG:5514 (záporné, jako v GIS) nebo jako kladné Y/X.</li>
+              <li>Zeměpisná poloha (WGS84) a odkazy na Mapy.cz a Google Maps. Odkaz předá polohu, jen když na něj klikneš.</li>
+              <li>Oranžová tečka u záložky Geo upozorňuje na problém v georeferenci.</li>
+            </ul>
+          </section>
+
+          <section data-sec="data" hidden>
+            <h3>Mapy a data</h3>
+            <p>Záložka <b>Data</b> funguje jen u georeferencovaného modelu. Podklad se položí pod model ve 3D i v půdorysu.</p>
+            <ul>
+              <li><b>Nabídka</b> veřejných služeb: ortofoto, katastrální mapa, ZTM, ZABAGED, vrstevnice, RÚIAN, digitální technická mapa (DMVS), terén DMR 5G a povrch DMP 1G a 3D budovy Brna.</li>
+              <li><b>Vlastní služba</b>: vlož adresu WMS (1.3.0 i 1.1.1) nebo ArcGIS Serveru (MapServer, FeatureServer, ImageServer, SceneServer). Aplikace nabídne vrstvy služby.</li>
+              <li><b>Terén</b>: s načteným výškovým modelem se mapy a vektory pokládají na terén.</li>
+              <li><b>3D budovy</b>: budovy, které leží v půdorysu načtených IFC modelů, se samy skryjí, aby se nepřekrývaly. Jde to vypnout u vrstvy.</li>
+              <li>U každé vrstvy jde měnit průhlednost, skrýt ji a šipkami měnit pořadí.</li>
+              <li><b>Info o místě</b>: po zapnutí ťukni do modelu nebo půdorysu a ukážou se atributy vrstev v tom místě.</li>
+            </ul>
+            <p class="help-note">Služba musí povolovat přístup z jiných webů (CORS), jinak ji prohlížeč nenačte. Službě se posílá jen výřez okolí modelu, ne model.</p>
+          </section>
+
+          <section data-sec="multi" hidden>
+            <h3>Více modelů</h3>
+            <ul>
+              <li>V panelu Model v části <b>Modely</b> přidej tlačítkem <b>Přidat další model</b> podkladový model, třeba TZB nebo statiku.</li>
+              <li>Modely se zarovnají podle georeference obou souborů. Když ji nemají, zarovnají se podle souřadnic IFC.</li>
+              <li>Podkladový model jde skrýt nebo zobrazit průhledně ve své barvě. Ťuknutím na jeho prvek se ukážou vlastnosti.</li>
+              <li>Kterýkoli model jde <b>udělat hlavním</b>. Strom, hledání, barvení a porovnání pracují s hlavním modelem.</li>
+              <li>Sestavu hlavního a podkladových modelů jde příště obnovit jedním tlačítkem v části Nedávné modely.</li>
+            </ul>
+          </section>
+
+          <section data-sec="compare" hidden>
+            <h3>Porovnání verzí</h3>
+            <ul>
+              <li>V panelu Model zvol <b>Porovnat se starší verzí…</b> a vyber starší soubor téhož modelu.</li>
+              <li>Prvky se párují podle GlobalId. Výsledkem jsou <b>přidané</b>, <b>změněné</b> (geometrie, vlastnosti, atributy) a <b>odebrané</b> prvky. Odebrané se ukážou jako červení „duchové“.</li>
+              <li>Výsledky jsou v záložce <b>Změny</b>, která se při porovnání objeví. U změněného prvku je tabulka hodnot před → po.</li>
+              <li>Změny jde exportovat do CSV.</li>
+            </ul>
+          </section>
+
+          <section data-sec="bcf" hidden>
+            <h3>BCF záznamy</h3>
+            <ul>
+              <li>V záložce <b>BCF</b> založíš záznam k aktuálnímu pohledu. Uloží se pohled, řez, vybraný prvek a snímek obrazovky.</li>
+              <li>K záznamu jde přidávat komentáře a měnit jeho stav. Ťuknutím na záznam se obnoví uložený pohled.</li>
+              <li>Záznamy exportuješ do souboru <b>.bcfzip</b> (BCF 2.1), který otevřou Revit, Archicad, Solibri a další programy. Soubor .bcfzip jde také načíst.</li>
+            </ul>
+          </section>
+
+          <section data-sec="export" hidden>
+            <h3>Exporty</h3>
+            <dl class="help-dl">
+              <dt>Místnosti do Excelu</dt><dd>panel Model, nebo jen místnosti podlaží či budovy z jejich vlastností. Obsahuje číslo, název, plochu, výšku, objem, souřadnice, GlobalId, všechny vlastnosti a souhrny podle podlaží a účelu.</dd>
+              <dt>Půdorys PNG</dt><dd>v liště půdorysu, s popisky, měřítkem, severkou a legendou barvení</dd>
+              <dt>Body CSV</dt><dd>záložka Geo, body z nástroje Souřadnice</dd>
+              <dt>Změny CSV</dt><dd>záložka Změny</dd>
+              <dt>BCF</dt><dd>záložka BCF, soubor .bcfzip</dd>
+            </dl>
+            <p>Všechny exporty vznikají v zařízení a uloží se tam, kam určíš.</p>
+          </section>
+
+          <section data-sec="tips" hidden>
+            <h3>Tipy a problémy</h3>
+            <dl class="help-dl">
+              <dt>Velký model se nenačte</dt><dd>Modely o stovkách MB mohou překročit paměť Safari. Pomůže vypnout Hrany, skrýt část podlaží nebo zavřít ostatní panely Safari.</dd>
+              <dt>Soubor .ifczip</dt><dd>Je potřeba ho nejdřív rozbalit, třeba v aplikaci Soubory.</dd>
+              <dt>Mapová služba nejde přidat</dt><dd>Služba nejspíš nepovoluje přístup z jiných webů (CORS), nebo jde o službu, která není veřejná.</dd>
+              <dt>Model je na mapě jinde</dt><dd>Podívej se do záložky Geo na kontroly georeference. Častá příčina je chybějící jednotka mapy nebo prohozené souřadnice.</dd>
+              <dt>Aktualizace se neprojevila</dt><dd>Aplikaci s připojením k internetu zavři a otevři. Někdy je potřeba to udělat dvakrát.</dd>
+              <dt>Zmizely nedávné modely</dt><dd>Ukládají se v úložišti Safari. Smaže je vymazání dat webu v nastavení Safari.</dd>
+            </dl>
+          </section>
+
+          <section data-sec="about" hidden>
+            <h3>O aplikaci</h3>
+            <p><strong>IFC prohlížečka</strong> <span class="muted" id="about-version"></span></p>
+            <p>Prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohlížeči, po prvním otevření funguje i offline.</p>
+            <h4>Soukromí</h4>
+            <ul>
+              <li>Modely se zpracují v tomto zařízení a <b>nikam se neodesílají</b>. Nedávné modely jsou uložené jen v tomto zařízení.</li>
+              <li>Ze zařízení odchází jen to, o co požádáš: dotazy na mapové služby v záložce Data (výřez okolí modelu), Info o místě (souřadnice bodu) a odkazy na Mapy.cz a Google Maps.</li>
+            </ul>
+            <p class="small muted">© 2026 autoři IFC prohlížečky · licence MIT · software je poskytován „tak, jak je“, bez záruky.</p>
+          </section>
+
+          <section data-sec="licenses" hidden>
+            <h3>Licence</h3>
+            <p>Aplikace používá tyto knihovny a písma. Ťuknutím zobrazíš plný text licence.</p>
+            <ul class="lic-list">
+              <li><button class="lic" type="button" data-file="licenses/three.js-MIT.txt"><b>three.js</b> 0.180.0<span>MIT</span></button></li>
+              <li><button class="lic" type="button" data-file="licenses/web-ifc-MPL-2.0.txt"><b>web-ifc</b> 0.0.77<span>MPL-2.0</span></button></li>
+              <li><button class="lic" type="button" data-file="licenses/fflate-MIT.txt"><b>fflate</b> 0.8.2<span>MIT</span></button></li>
+              <li><button class="lic" type="button" data-file="licenses/proj4-MIT.txt"><b>proj4js</b> 2.19.10<span>MIT</span></button></li>
+              <li><button class="lic" type="button" data-file="licenses/mgrs-MIT.txt"><b>mgrs</b> 1.0.0<span>MIT</span></button></li>
+              <li><button class="lic" type="button" data-file="licenses/wkt-parser-MIT.txt"><b>wkt-parser</b> 1.6.0<span>MIT</span></button></li>
+              <li><button class="lic" type="button" data-file="licenses/lerc-Apache-2.0.txt"><b>lerc</b> 4.0.4<span>Apache-2.0</span></button></li>
+              <li><button class="lic" type="button" data-file="licenses/IBM-Plex-OFL-1.1.txt"><b>IBM Plex</b> písma<span>OFL 1.1</span></button></li>
+              <li><button class="lic" type="button" data-file="LICENSE"><b>IFC prohlížečka</b> vlastní kód<span>MIT</span></button></li>
+            </ul>
+            <pre class="lic-text" id="lic-text" tabindex="0" hidden></pre>
+            <p class="small muted">web-ifc je použitý beze změn; zdrojový kód: <a href="https://github.com/ThatOpen/engine_web-ifc" target="_blank" rel="noopener">github.com/ThatOpen/engine_web-ifc</a></p>
+            <p class="small muted">Mapy, výškové modely a data načtená v záložce Data nejsou součástí aplikace a řídí se podmínkami svých poskytovatelů (např. © ČÚZK, statutární město Brno). Ukázkový pavilon je smyšlený model.</p>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tour" id="tour" hidden>
+    <div class="tour-spot" id="tour-spot" hidden></div>
+    <div class="tour-card" id="tour-card" role="dialog" aria-modal="true" aria-labelledby="tour-title">
+      <div class="tour-step" id="tour-step"></div>
+      <h2 class="tour-title" id="tour-title"></h2>
+      <div class="tour-text" id="tour-text"></div>
+      <div class="tour-foot">
+        <button class="link" id="tour-skip" type="button">Přeskočit</button>
+        <span class="grow"></span>
+        <button class="sbtn" id="tour-back" type="button">Zpět</button>
+        <button class="sbtn primary" id="tour-next" type="button">Další</button>
       </div>
     </div>
   </div>

@@ -23,32 +23,52 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - BCF 2.1: záznamy k prvkům (pohled, řez, vybraný prvek, snímek), komentáře, export a import `.bcfzip`
 - **nedávné modely**: otevřené IFC se ukládají v zařízení (posledních 8), příště se otevřou jedním ťuknutím i bez internetu; poslední sestavu hlavního a podkladových modelů jde obnovit jedním tlačítkem
 - **více modelů najednou**: k hlavnímu modelu jde přidat podkladové (např. TZB, statika), zarovnané podle georeference (IfcMapConversion obou modelů), jinak podle souřadnic IFC; lze je skrýt, zobrazit průhledně v barvě modelu, ťuknutím zobrazit vlastnosti prvku nebo kterýkoli udělat hlavním (strom, hledání, barvení a porovnání pracují s hlavním modelem)
+- **průvodce při prvním spuštění** (7 kroků, jde přeskočit a spustit znovu) a **návod** pod otazníkem v horní liště: kapitoly podle funkcí, O aplikaci (verze, soukromí) a licence
 - světlý a tmavý režim: výchozí podle nastavení zařízení, tlačítkem v horní liště jde přepnout a volba se pamatuje
 - práci offline po prvním otevření
 
-## Zveřejnění na GitHub Pages
+## Zveřejnění s přihlášením (Cloudflare Pages + Access)
 
-1. Na GitHubu vytvoř nový repozitář, například `ifc-nahled`.
-   - **Public** je zdarma.
-   - **Private** vyžaduje pro Pages placený účet (GitHub Pro) a **web bude i tak veřejný**. Soukromý zůstane jen kód.
-2. V repozitáři zvol **Add file → Upload files** a přetáhni tam **obsah** této složky, ne složku samotnou. Soubor `index.html` musí být v kořeni repozitáře. Potvrď tlačítkem **Commit changes**.
-3. Otevři **Settings → Pages**, v části *Build and deployment* nastav **Source: Deploy from a branch**, **Branch: main** a složku **/ (root)**, a dej **Save**.
-4. Za minutu nebo dvě bude aplikace na adrese `https://<tvoje-jmeno>.github.io/ifc-nahled/`. Přesná adresa se objeví nahoře na stránce Settings → Pages.
+Kód zůstane v soukromém repozitáři na GitHubu. Aplikaci hostuje Cloudflare Pages a Cloudflare Access ji otevře jen povoleným e‑mailům. Obojí je zdarma. IFC modely nikam neodcházejí ani tady, aplikace je zpracovává v zařízení.
 
-> Soubor `.nojekyll` je skrytý. Když ho při nahrávání přes web nevidíš, nevadí to, aplikace funguje i bez něj.
+1. **Repozitář na GitHubu** s obsahem této složky (soubor `index.html` v kořeni).
+2. **Cloudflare Pages:** na dash.cloudflare.com otevři **Workers & Pages → Create application → Pages → Connect to Git**. Vyber GitHub a povol přístup jen k tomuto repozitáři.
+   - **Project name:** určuje adresu `https://<název>.pages.dev`.
+   - **Production branch:** `main`.
+   - **Framework preset:** None.
+   - **Build command:** `exit 0`.
+   - **Build output directory:** `/`.
+   - **Environment variables:** `SKIP_DEPENDENCY_INSTALL` = `1`. Bez ní by se zbytečně instalovaly balíčky z `package.json`.
+   - Dej **Save and Deploy**.
+3. **Cloudflare Access:** v části **Zero Trust** zvol **Access → Applications → Add an application → Self-hosted**.
+   - Jako adresy přidej `<název>.pages.dev` a `*.<název>.pages.dev`. Druhá pokryje i náhledové verze.
+   - **Session duration:** 1 měsíc.
+   - **Policy:** *Allow*, *Include → Emails* a povolené e‑maily.
+   - **Login method:** One-time PIN, tedy kód poslaný e‑mailem.
+4. **Zkouška:** otevři adresu v anonymním okně. Musí se ukázat přihlášení Cloudflare.
+5. **Repozitář přepni na soukromý:** Settings → General → Change visibility → Private. Když předtím běžel na GitHub Pages, v Settings → Pages ho vypni.
+
+Když přihlášení vyprší a je síť, aplikace při otevření ukáže přihlášení Cloudflare. Bez sítě se otevře uložená verze.
+
+## Zveřejnění na GitHub Pages (veřejně)
+
+1. V **public** repozitáři s obsahem této složky otevři **Settings → Pages**.
+2. Nastav **Source: Deploy from a branch**, **Branch: main** a složku **/ (root)**.
+3. Za chvíli bude aplikace na `https://<tvoje-jmeno>.github.io/<repozitář>/`.
 
 ## Instalace na iPad
 
-1. Otevři adresu aplikace v **Safari**.
+1. Otevři adresu aplikace v **Safari**. Pokud je chráněná přihlášením, přihlas se kódem z e‑mailu.
 2. Počkej, až se načte ukázkový pavilon. Tím se aplikace uloží pro offline použití.
 3. Klepni na **Sdílet → Přidat na plochu**.
 4. Na ploše se objeví ikona **IFC prohlížečka**. Aplikace se otevírá přes celou obrazovku a funguje i bez internetu.
+5. Aplikace na ploše má vlastní přihlášení, oddělené od Safari. Při prvním spuštění se proto může přihlášení objevit ještě jednou.
 
 Vlastní model otevřeš oranžovým tlačítkem vpravo nahoře. Nabídne se aplikace Soubory s iCloudem, OneDrivem, SharePointem a dalšími úložišti.
 
 ## Aktualizace
 
-Když nahraješ nové verze souborů, otevři `sw.js` a zvyš číslo verze, například `ifc-nahled-v1` na `ifc-nahled-v2`. iPad si pak při dalším spuštění s internetem stáhne novou verzi. Po aktualizaci aplikaci jednou zavři a znovu otevři.
+Nové verze souborů nahraj do repozitáře. Cloudflare Pages je sám nasadí zhruba do minuty. Číslo verze v `sw.js` musí být vyšší než minule, například `ifc-nahled-v1` → `ifc-nahled-v2`. iPad si pak při dalším spuštění s internetem stáhne novou verzi. Po aktualizaci aplikaci jednou zavři a znovu otevři.
 
 ## Sestavení ze zdrojových kódů
 
