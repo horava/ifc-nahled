@@ -478,7 +478,9 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
 .cmp-new { font-weight: 600; }
 
 /* záložka Data: mapové podklady a služby */
-.dl-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 4px 8px 4px 8px; }
+.dl-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 4px; padding: 4px 8px 4px 8px; }
+.dl-move { display: flex; gap: 0; }
+.dl-move .ib:disabled { opacity: .3; }
 .dl-name { display: grid; gap: 1px; min-width: 0; }
 .dl-name .lg-sw { display: inline-block; margin-bottom: 2px; }
 .dl-err { color: var(--error); }
@@ -712,6 +714,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
           <li><button class="lic" type="button" data-file="licenses/proj4-MIT.txt"><b>proj4js</b> 2.19.10<span>MIT</span></button></li>
           <li><button class="lic" type="button" data-file="licenses/mgrs-MIT.txt"><b>mgrs</b> 1.0.0<span>MIT</span></button></li>
           <li><button class="lic" type="button" data-file="licenses/wkt-parser-MIT.txt"><b>wkt-parser</b> 1.6.0<span>MIT</span></button></li>
+          <li><button class="lic" type="button" data-file="licenses/lerc-Apache-2.0.txt"><b>lerc</b> 4.0.4<span>Apache-2.0</span></button></li>
           <li><button class="lic" type="button" data-file="licenses/IBM-Plex-OFL-1.1.txt"><b>IBM Plex</b> písma<span>OFL 1.1</span></button></li>
           <li><button class="lic" type="button" data-file="LICENSE"><b>IFC prohlížečka</b> vlastní kód<span>MIT</span></button></li>
         </ul>

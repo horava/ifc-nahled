@@ -12,6 +12,7 @@ IFC prohlížečka includes the following third-party components. Each remains u
 | proj4js | 2.19.10 | MIT | `app.js` | https://github.com/proj4js/proj4js |
 | mgrs (závislost proj4js) | 1.0.0 | MIT | `app.js` | https://github.com/proj4js/mgrs |
 | wkt-parser (závislost proj4js) | 1.6.0 | MIT | `app.js` | https://github.com/proj4js/wkt-parser |
+| lerc (dekodér výškových rastrů) | 4.0.4 | Apache-2.0 | `app.js`, `lerc-wasm.wasm` | https://github.com/Esri/lerc |
 | IBM Plex Sans, Sans Condensed, Mono | Fontsource 5.1.0 | SIL Open Font License 1.1 | `fonts/` | https://github.com/IBM/plex |
 
 ## web-ifc (MPL-2.0)
@@ -22,6 +23,12 @@ web-ifc je v aplikaci použitý **beze změn** (balíček `web-ifc@0.0.77` z npm
 - https://www.npmjs.com/package/web-ifc/v/0.0.77
 
 web-ifc is used **unmodified** (npm package `web-ifc@0.0.77`), bundled into `app.js` and `web-ifc.wasm`. Its source code is available at the links above, as required by MPL-2.0 section 3.2.
+
+## Mapové podklady / Map data
+
+Mapy, výškové modely a data, která si uživatel v záložce Data načte z veřejných služeb (např. ČÚZK, statutární město Brno), nejsou součástí aplikace. Řídí se podmínkami jejich poskytovatelů (např. © ČÚZK).
+
+Maps, elevation models and data loaded by the user from public services are not part of the app and are subject to their providers' terms.
 
 ## Vzorový model / Sample model
 

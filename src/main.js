@@ -8,6 +8,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import proj4 from 'proj4';
+import * as Lerc from 'lerc/LercDecode.es.js';
 
 /* ---------- helpers ---------- */
 const $ = (s) => document.querySelector(s);
@@ -4958,6 +4959,13 @@ const DATA_CATALOG = [
     { key: 'zabaged', name: 'ZABAGED polohopis', note: 'ČÚZK, s atributy', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_POLOHOPIS/MapServer`, format: 'png32', transparent: true, identify: true } },
     { key: 'vrst', name: 'Vrstevnice', note: 'ČÚZK ZABAGED', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_VRSTEVNICE/MapServer`, format: 'png32', transparent: true } },
   ] },
+  { group: 'Terén', items: [
+    { key: 'dmr5g', name: 'Terén DMR 5G', note: 'ČÚZK, mřížka 2 m, mapy a vektory se na něj položí', src: { type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmr5g/ImageServer`, cell: 2 } },
+    { key: 'dmp1g', name: 'Povrch DMP 1G', note: 'ČÚZK, včetně budov a vegetace', src: { type: 'agsterrain', url: `${CUZK}/arcgis2/rest/services/dmp1g/ImageServer`, cell: 1 } },
+  ] },
+  { group: '3D budovy', items: [
+    { key: 'brno3d', name: 'Brno – budovy LoD2 (barevné)', note: 'Magistrát města Brna, SceneServer', src: { type: 'i3s', url: 'https://gis.brno.cz/ags1/rest/services/OMI/OMI_3D_budovy_lod2_obarveny_sjtsk/SceneServer' } },
+  ] },
   { group: 'Katastr a adresy (RÚIAN, vektory s atributy)', items: [
     { key: 'parcely', name: 'Parcely', note: 'čísla parcel, výměra', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/5`, label: 'cisloparcely', color: '#1baf7a' } },
     { key: 'budovy', name: 'Stavební objekty', note: 'čísla domovní, podlaží', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/3`, label: 'cisladomovni', color: '#e34948' } },
@@ -5068,8 +5076,9 @@ async function loadDataLayer(L) {
   if (!F) { L.state = 'error'; L.error = 'Model není georeferencovaný.'; return; }
   const X = dataExtent(F);
   if (!X) return;
-  const token = ++L.token || (L.token = 1);
-  L.state = 'loading'; L.error = ''; renderDataPanel();
+  L.token = (L.token || 0) + 1;
+  const token = L.token;
+  L.state = 'loading'; L.error = ''; L.warn = ''; renderDataPanel();
   try {
     if (L.src.type === 'agsfeat') {
       if (!L.info) {
@@ -5080,13 +5089,19 @@ async function loadDataLayer(L) {
       if (token !== L.token) return;
       L.features = q.features || [];
       L.exceeded = !!q.exceededTransferLimit;
+    } else if (L.src.type === 'agsterrain') {
+      L.dem = await loadTerrain(L.src, F, X);
+      if (token !== L.token) return;
+    } else if (L.src.type === 'i3s') {
+      L.i3s = await loadI3S(L, F, X, () => token === L.token);
+      if (token !== L.token) return;
     } else {
       const img = await loadImage(imageUrl(L.src, F, X));
       if (token !== L.token) return;
       L.img = img; L.ext = X;
     }
     L.state = 'ok';
-    buildDataLayer(L);
+    if (L.src.type === 'agsterrain') rebuildDataLayers(); else buildDataLayer(L);
   } catch (e) {
     if (token !== L.token) return;
     L.state = 'error'; L.error = e.message || String(e);
@@ -5094,68 +5109,309 @@ async function loadDataLayer(L) {
   renderDataPanel();
   requestRender(); markPlanDirty(0);
 }
-/* sestavení 3D objektů vrstvy (obrázek = deska pod modelem, vektory = čáry a výplně) */
+
+/* ---------- terén z ArcGIS ImageServeru (LERC, výšky float32) ---------- */
+async function loadTerrain(src, F, X) {
+  const cell = src.cell || 2;
+  let W = Math.round((X.e1 - X.e0) / cell) + 1, H = Math.round((X.n1 - X.n0) / cell) + 1;
+  const k = Math.max(1, Math.max(W, H) / 400);
+  W = Math.max(8, Math.round(W / k)); H = Math.max(8, Math.round(H / k));
+  const url = `${src.url}/exportImage?${qs({ bbox: `${X.e0},${X.n0},${X.e1},${X.n1}`, bboxSR: F.sr, imageSR: F.sr, size: `${W},${H}`, format: 'lerc', pixelType: 'F32', noDataInterpretation: 'esriNoDataMatchAny', interpolation: 'RSP_BilinearInterpolation', f: 'image' })}`;
+  let r;
+  try { r = await fetch(url, { mode: 'cors' }); } catch (e) { throw new Error('Terén se nepodařilo načíst. Služba nepovoluje přístup z jiné aplikace (CORS), nebo je nedostupná.'); }
+  if (!r.ok) throw new Error(`Služba terénu vrátila chybu ${r.status}.`);
+  const buf = await r.arrayBuffer();
+  try { await Lerc.load({ locateFile: (name) => new URL(name, document.baseURI).href }); } catch (e) { throw new Error('Dekodér výšek (lerc-wasm.wasm) se nepodařilo načíst.'); }
+  let img;
+  try { img = Lerc.decode(buf); } catch (e) {
+    let msg = 'Odpověď služby není výškový rastr (LERC).';
+    try { const j = JSON.parse(new TextDecoder().decode(buf)); if (j?.error?.message) msg = j.error.message; } catch (_) { /* binární */ }
+    throw new Error(msg);
+  }
+  const z = img.pixels[0];
+  const mask = img.mask;
+  let lo = Infinity, hi = -Infinity;
+  const vals = new Float32Array(img.width * img.height);
+  for (let i = 0; i < vals.length; i++) {
+    const v = z[i];
+    const ok = (!mask || mask[i]) && Number.isFinite(v) && v > -1000 && v < 10000;
+    vals[i] = ok ? v : NaN;
+    if (ok) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  }
+  if (!Number.isFinite(lo)) throw new Error('Pro okolí modelu služba nevrátila žádné výšky.');
+  // díry (NoData) doplnit průměrem
+  const mean = (lo + hi) / 2;
+  for (let i = 0; i < vals.length; i++) if (Number.isNaN(vals[i])) vals[i] = mean;
+  return { X, W: img.width, H: img.height, z: vals, lo, hi };
+}
+/* aktivní terén = nejvýše položená viditelná načtená vrstva terénu */
+function activeDem() {
+  for (let i = D.layers.length - 1; i >= 0; i--) { const L = D.layers[i]; if (L.visible && L.state === 'ok' && L.dem) return L.dem; }
+  return null;
+}
+/* výška terénu (bilineárně) v souřadnicích požadavku; mimo rastr null */
+function demHeight(dem, E, N) {
+  const { X, W, H, z } = dem;
+  const fx = (E - X.e0) / (X.e1 - X.e0) * W - 0.5, fy = (X.n1 - N) / (X.n1 - X.n0) * H - 0.5;
+  if (fx < -0.5 || fy < -0.5 || fx > W - 0.5 || fy > H - 0.5) return null;
+  const x0 = Math.max(0, Math.min(W - 1, Math.floor(fx))), y0 = Math.max(0, Math.min(H - 1, Math.floor(fy)));
+  const x1 = Math.min(W - 1, x0 + 1), y1 = Math.min(H - 1, y0 + 1);
+  const tx = Math.min(1, Math.max(0, fx - x0)), ty = Math.min(1, Math.max(0, fy - y0));
+  const a = z[y0 * W + x0], b = z[y0 * W + x1], c = z[y1 * W + x0], d = z[y1 * W + x1];
+  return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+}
+/* síť terénu ve scéně; uvExt = výřez obrázku, který se na terén natáhne */
+function demGeometry(dem, F, lift, uvExt) {
+  const { X, W, H, z } = dem;
+  const pos = new Float32Array(W * H * 3), uv = uvExt ? new Float32Array(W * H * 2) : null;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const E = X.e0 + (i + 0.5) / W * (X.e1 - X.e0), N = X.n1 - (j + 0.5) / H * (X.n1 - X.n0);
+    const s = dataScene(F, E, N, z[j * W + i], lift);
+    const k = j * W + i;
+    pos[k * 3] = s.x; pos[k * 3 + 1] = s.y; pos[k * 3 + 2] = s.z;
+    if (uv) { uv[k * 2] = (E - uvExt.e0) / (uvExt.e1 - uvExt.e0); uv[k * 2 + 1] = (N - uvExt.n0) / (uvExt.n1 - uvExt.n0); }
+  }
+  const idx = new Uint32Array((W - 1) * (H - 1) * 6);
+  let t = 0;
+  for (let j = 0; j + 1 < H; j++) for (let i = 0; i + 1 < W; i++) {
+    const a = j * W + i, b = a + 1, c = a + W, d = c + 1;
+    idx[t++] = a; idx[t++] = c; idx[t++] = b; idx[t++] = b; idx[t++] = c; idx[t++] = d;
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  if (uv) g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(new THREE.BufferAttribute(idx, 1));
+  g.computeVertexNormals();
+  g.computeBoundingSphere();
+  return g;
+}
+
+/* ---------- 3D budovy ze SceneServeru (I3S, vrstva 3DObject / IntegratedMesh) ---------- */
+const I3S_TYPES = { Float32: [Float32Array, 4], Float64: [Float64Array, 8], UInt8: [Uint8Array, 1], Int8: [Int8Array, 1], UInt16: [Uint16Array, 2], Int16: [Int16Array, 2], UInt32: [Uint32Array, 4], Int32: [Int32Array, 4], UInt64: [null, 8] };
+async function fetchBin(url) {
+  let r;
+  try { r = await fetch(url, { mode: 'cors' }); } catch (e) { throw new Error('Data scény nejdou načíst. Služba nepovoluje přístup z jiné aplikace (CORS), nebo je nedostupná.'); }
+  if (!r.ok) throw new Error(`Služba vrátila chybu ${r.status}.`);
+  return r.arrayBuffer();
+}
+async function loadI3S(L, F, X, alive) {
+  const base = L.src.url.replace(/\/+$/, '');
+  const layerUrl = /\/layers\/\d+$/i.test(base) ? base : `${base}/layers/0`;
+  const info = await fetchJson(`${layerUrl}?f=json`);
+  if (!/3DObject|IntegratedMesh/i.test(info.layerType || '')) throw new Error(`Typ scény „${info.layerType || '?'}“ zatím neumím. Umím 3D objekty (3DObject) a integrovanou síť.`);
+  const crs = String(info.store?.vertexCRS || info.spatialReference?.latestWkid || info.spatialReference?.wkid || '');
+  const epsg = Number((crs.match(/(\d{4,6})\s*$/) || [])[1]) || null;
+  const okCrs = epsg === F.sr || (F.sr === 5514 && [102067, 5514].includes(Number(info.spatialReference?.wkid)));
+  if (!okCrs) throw new Error(`Scéna je v souřadnicovém systému ${epsg ? `EPSG:${epsg}` : crs || 'neznámém'}, model v EPSG:${F.sr}. Umím jen scény ve stejném systému.`);
+  if (!info.nodePages) throw new Error('Scéna je ve starší verzi I3S bez nodePages, tu zatím neumím.');
+  const gdef = info.geometryDefinitions?.[0];
+  const bufIdx = gdef ? gdef.geometryBuffers.findIndex((b) => !b.compressedAttributes) : -1;
+  if (bufIdx < 0) throw new Error('Scéna má jen komprimovanou geometrii (Draco), tu zatím neumím.');
+  const layout = gdef.geometryBuffers[bufIdx];
+  const per = Math.max(1, info.nodePages.nodesPerPage || 64);
+  const pages = new Map();
+  const node = async (i) => {
+    const p = Math.floor(i / per);
+    if (!pages.has(p)) pages.set(p, fetchJson(`${layerUrl}/nodepages/${p}?f=json`));
+    const pg = await pages.get(p);
+    return pg.nodes.find((n) => n.index === i) || pg.nodes[i - p * per];
+  };
+  const inExt = (n) => {
+    const c = n.obb?.center, h = n.obb?.halfSize;
+    if (!c || !h) return true;
+    const r = Math.hypot(h[0], h[1], h[2]);
+    const dx = Math.max(X.e0 - c[0], 0, c[0] - X.e1), dy = Math.max(X.n0 - c[1], 0, c[1] - X.n1);
+    return dx * dx + dy * dy <= r * r;
+  };
+  // průchod stromem: do listů (nejvyšší podrobnost) jen tam, kde zasahují do výřezu
+  const leaves = [];
+  const stack = [info.nodePages.rootIndex || 0];
+  let visits = 0;
+  while (stack.length) {
+    if (!alive()) throw new Error('aborted');
+    const n = await node(stack.pop());
+    if (!n || ++visits > 5000 || !inExt(n)) continue;
+    if (n.children?.length) n.children.forEach((c) => stack.push(c));
+    else if (n.mesh?.geometry) leaves.push(n);
+    if (leaves.length > 160) break;
+  }
+  if (!leaves.length) throw new Error('V okolí modelu scéna nic neobsahuje.');
+  const out = { layerUrl, info, nodes: [], warn: leaves.length > 160 ? 'Scéna je v okolí modelu hodně podrobná, načetla se jen část. Zmenšete okolí.' : '' };
+  for (const n of leaves) {
+    if (!alive()) throw new Error('aborted');
+    const buf = await fetchBin(`${layerUrl}/nodes/${n.mesh.geometry.resource}/geometries/${bufIdx}`);
+    const g = parseI3SGeometry(buf, layout);
+    if (g) out.nodes.push({ n, g });
+  }
+  return out;
+}
+function parseI3SGeometry(buf, layout) {
+  const dv = new DataView(buf);
+  const vc = dv.getUint32(0, true), fc = buf.byteLength >= 8 ? dv.getUint32(4, true) : 0;
+  let off = layout.offset ?? 8;
+  const res = { vc, fc };
+  for (const [name, spec] of Object.entries(layout)) {
+    if (!spec || typeof spec !== 'object' || !spec.type) continue;
+    const [T, size] = I3S_TYPES[spec.type] || [];
+    if (!size) return null;
+    const count = (spec.binding === 'per-feature' ? fc : vc) * (spec.component || 1);
+    const bytes = count * size;
+    if (off + bytes > buf.byteLength) return res.position ? res : null;
+    if (name === 'featureId' && spec.type === 'UInt64') {
+      const ids = new Float64Array(count);
+      for (let i = 0; i < count; i++) ids[i] = dv.getUint32(off + i * 8, true) + dv.getUint32(off + i * 8 + 4, true) * 4294967296;
+      res.featureId = ids;
+    } else if (T) {
+      res[name] = new T(buf.slice(off, off + bytes));
+    }
+    off += bytes;
+  }
+  return res.position ? res : null;
+}
+/* matice ze souřadnic požadavku (E, N, H) do scény */
+function reqToSceneMatrix(F) {
+  const f = (E, N, H) => dataScene(F, E, N, H, 0);
+  const o = f(0, 0, 0);
+  const ex = f(1, 0, 0).sub(o), ny = f(0, 1, 0).sub(o), hz = f(0, 0, 1).sub(o);
+  return new THREE.Matrix4().makeBasis(ex, ny, hz).setPosition(o);
+}
+function buildI3S(L, F) {
+  const grp = new THREE.Group();
+  const M = reqToSceneMatrix(F);
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: (L.opacity ?? 1) < 1, opacity: L.opacity ?? 1 });
+  const plain = new THREE.MeshLambertMaterial({ color: 0xd9d4cc, side: THREE.DoubleSide, transparent: (L.opacity ?? 1) < 1, opacity: L.opacity ?? 1 });
+  for (const { n, g } of L.i3s.nodes) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(g.position, 3));
+    if (g.normal) geo.setAttribute('normal', new THREE.BufferAttribute(g.normal, 3)); else geo.computeVertexNormals();
+    let m0 = plain;
+    if (g.color) { geo.setAttribute('color', new THREE.BufferAttribute(g.color, 4, true)); m0 = mat; mat.vertexAlphas = false; }
+    geo.computeBoundingSphere();
+    const mesh = new THREE.Mesh(geo, m0);
+    mesh.matrixAutoUpdate = false;
+    const c = n.obb.center;
+    mesh.matrix.copy(M).multiply(new THREE.Matrix4().makeTranslation(c[0], c[1], c[2]));
+    mesh.matrixWorldNeedsUpdate = true;
+    mesh.userData.i3s = { n, g };
+    grp.add(mesh);
+  }
+  return grp;
+}
+/* atributy prvku scény (binární bufery podle attributeStorageInfo) */
+async function i3sAttributes(L, n, k) {
+  const info = L.i3s.info;
+  const rows = [];
+  for (const a of info.attributeStorageInfo || []) {
+    try {
+      const buf = await fetchBin(`${L.i3s.layerUrl}/nodes/${n.mesh.attribute?.resource ?? n.mesh.geometry.resource}/attributes/${a.key}/0`);
+      const dv = new DataView(buf);
+      const count = dv.getUint32(0, true);
+      if (k >= count) continue;
+      const vt = a.attributeValues?.valueType;
+      let v = null;
+      if (vt === 'String') {
+        const total = dv.getUint32(4, true);
+        let p = 8;
+        const lens = [];
+        for (let i = 0; i < count; i++) { lens.push(dv.getUint32(p, true)); p += 4; }
+        for (let i = 0; i < k; i++) p += lens[i];
+        v = new TextDecoder().decode(new Uint8Array(buf, p, Math.max(0, lens[k] - 1)));
+        void total;
+      } else if (I3S_TYPES[vt]?.[0]) {
+        const [T, size] = I3S_TYPES[vt];
+        let start = (a.header || []).length * 4;
+        if (size === 8 && start % 8) start += 8 - (start % 8);
+        v = new T(buf.slice(start + k * size, start + (k + 1) * size))[0];
+        if (vt === 'Float64' && Math.abs(v) > 1e37) v = null;
+      }
+      if (v != null && v !== '') {
+        const fld = (info.fields || []).find((f) => f.name === a.name);
+        rows.push([fld?.alias || a.name, typeof v === 'number' ? nf.format(v) : String(v)]);
+      }
+    } catch (e) { /* atribut nejde načíst */ }
+  }
+  return rows;
+}
+
+/* sestavení 3D objektů vrstvy (obrázek = deska nebo potah terénu, vektory = čáry a výplně) */
 function buildDataLayer(L) {
   disposeLayerObj(L);
   const F = dataFrame();
   if (!F || L.state !== 'ok') return;
   const H = dataGroundH(F);
   const idx = D.layers.indexOf(L);
+  const dem = activeDem();
   const lift = -0.06 + idx * 0.004;
   const grp = new THREE.Group();
-  if (L.img) {
+  if (L.dem) {
+    // terén: stínovaný povrch
+    const geo = demGeometry(L.dem, F, 0, null);
+    const m = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: new THREE.Color(isDarkTheme() ? '#5d665f' : '#c9cfc4'), side: THREE.DoubleSide, transparent: (L.opacity ?? 1) < 1, opacity: L.opacity ?? 1, depthWrite: (L.opacity ?? 1) >= 1 }));
+    m.renderOrder = -30;
+    m.userData.dem = true;
+    grp.add(m);
+  } else if (L.i3s) {
+    grp.add(buildI3S(L, F));
+  } else if (L.img) {
     const X = L.ext;
-    const c = [[X.e0, X.n0], [X.e1, X.n0], [X.e1, X.n1], [X.e0, X.n1]].map(([E, N]) => dataScene(F, E, N, H, lift));
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute([c[0], c[1], c[2], c[0], c[2], c[3]].flatMap((p) => [p.x, p.y, p.z]), 3));
-    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2));
-    geo.computeVertexNormals();
     const tex = new THREE.Texture(L.img);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.anisotropy = 4;
     tex.needsUpdate = true;
     const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: L.opacity ?? 1, depthWrite: false, side: THREE.DoubleSide });
+    let geo;
+    if (dem) {
+      // potah terénu: stejná síť, posunutá nad terén, aby se s ním nepřekrývala
+      geo = demGeometry(dem, F, 0.03 + idx * 0.01, X);
+      Object.assign(mat, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 - idx });
+    } else {
+      const c = [[X.e0, X.n0], [X.e1, X.n0], [X.e1, X.n1], [X.e0, X.n1]].map(([E, N]) => dataScene(F, E, N, H, lift));
+      geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute([c[0], c[1], c[2], c[0], c[2], c[3]].flatMap((p) => [p.x, p.y, p.z]), 3));
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2));
+      geo.computeVertexNormals();
+    }
     const mesh = new THREE.Mesh(geo, mat);
     mesh.renderOrder = -20 + idx;
     grp.add(mesh);
   } else if (L.features) {
     const col = new THREE.Color(L.src.color || '#2a78d6');
     const segs = [], tris = [], pts = [];
-    const ringsOf = (g) => g.rings || [];
     for (const f of L.features) {
       const g = f.geometry;
       if (!g) continue;
       if (g.rings) {
-        // vnější obrysy a díry podle orientace (Esri: vnější po směru hodin)
         const outer = [];
-        for (const r of ringsOf(g)) {
-          const loc = r.map(([E, N]) => F.toLocal(E, N));
-          for (let i = 0; i + 1 < loc.length; i++) segs.push(loc[i], loc[i + 1]);
-          const v2 = loc.map(([x, y]) => new THREE.Vector2(x, y));
+        for (const r of g.rings) {
+          for (let i = 0; i + 1 < r.length; i++) segs.push(r[i], r[i + 1]);
+          const v2 = r.map(([E, N]) => { const [x, y] = F.toLocal(E, N); return new THREE.Vector2(x, y); });
           if (v2.length > 2 && v2[0].equals(v2[v2.length - 1])) v2.pop();
           if (v2.length < 3) continue;
           if (THREE.ShapeUtils.isClockWise(v2) || !outer.length) outer.push({ c: THREE.ShapeUtils.isClockWise(v2) ? v2.reverse() : v2, h: [] });
           else outer[outer.length - 1].h.push(THREE.ShapeUtils.isClockWise(v2) ? v2 : v2.reverse());
         }
-        for (const o of outer) {
-          try {
-            const all = [o.c, ...o.h].flat();
-            for (const t of THREE.ShapeUtils.triangulateShape(o.c, o.h)) tris.push(all[t[0]], all[t[1]], all[t[2]]);
-          } catch (e) { /* vadný polygon */ }
+        if (!dem) {
+          for (const o of outer) {
+            try {
+              const all = [o.c, ...o.h].flat();
+              for (const t of THREE.ShapeUtils.triangulateShape(o.c, o.h)) tris.push(all[t[0]], all[t[1]], all[t[2]]);
+            } catch (e) { /* vadný polygon */ }
+          }
         }
       } else if (g.paths) {
-        for (const p of g.paths) { const loc = p.map(([E, N]) => F.toLocal(E, N)); for (let i = 0; i + 1 < loc.length; i++) segs.push(loc[i], loc[i + 1]); }
-      } else if (g.x != null) {
-        pts.push(F.toLocal(g.x, g.y));
-      } else if (g.points) {
-        g.points.forEach(([E, N]) => pts.push(F.toLocal(E, N)));
-      }
+        for (const p of g.paths) for (let i = 0; i + 1 < p.length; i++) segs.push(p[i], p[i + 1]);
+      } else if (g.x != null) pts.push([g.x, g.y]);
+      else if (g.points) g.points.forEach((q) => pts.push(q));
     }
-    const zl = F.localZ(H) + lift + 0.012;
-    const toS = (p) => toScenePoint(new THREE.Vector3(p.x ?? p[0], p.y ?? p[1], zl));
+    // výška bodu: na terénu, jinak na desce podkladu
+    const zAt = (E, N, up) => {
+      const h = dem ? demHeight(dem, E, N) : null;
+      return h != null ? F.localZ(h) + up : F.localZ(H) + lift + 0.012;
+    };
+    const sceneReq = (E, N, up) => { const [x, y] = F.toLocal(E, N); return toScenePoint(new THREE.Vector3(x, y, zAt(E, N, up))); };
     if (tris.length) {
       const pos = [];
-      tris.forEach((p) => { const s = toS(p); pos.push(s.x, s.y, s.z); });
+      tris.forEach((v) => { const s = toScenePoint(new THREE.Vector3(v.x, v.y, F.localZ(H) + lift + 0.012)); pos.push(s.x, s.y, s.z); });
       const geo = new THREE.BufferGeometry();
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.07 * (L.opacity ?? 1), depthWrite: false, side: THREE.DoubleSide }));
@@ -5164,21 +5420,32 @@ function buildDataLayer(L) {
     }
     if (segs.length) {
       const pos = [];
-      segs.forEach((p) => { const s = toS(p); pos.push(s.x, s.y + 0.004, s.z); });
+      const step = dem ? Math.max(1, (dem.X.e1 - dem.X.e0) / dem.W) : Infinity;
+      for (let i = 0; i < segs.length; i += 2) {
+        const [E1, N1] = segs[i], [E2, N2] = segs[i + 1];
+        const n = dem ? Math.min(200, Math.max(1, Math.ceil(Math.hypot(E2 - E1, N2 - N1) / step))) : 1;
+        let prev = sceneReq(E1, N1, 0.12);
+        for (let k = 1; k <= n; k++) {
+          const t = k / n;
+          const cur = sceneReq(E1 + (E2 - E1) * t, N1 + (N2 - N1) * t, 0.12);
+          pos.push(prev.x, prev.y + (dem ? 0 : 0.004), prev.z, cur.x, cur.y + (dem ? 0 : 0.004), cur.z);
+          prev = cur;
+        }
+      }
       const lg = new LineSegmentsGeometry().setPositions(pos);
       const lm = new LineMaterial({ color: col, linewidth: 2, worldUnits: false, transparent: true, opacity: L.opacity ?? 1 });
+      if (dem) Object.assign(lm, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 });
       lm.resolution.copy(measureMat.resolution);
       const ls = new LineSegments2(lg, lm);
       ls.renderOrder = -9 + idx;
       grp.add(ls);
     }
     if (pts.length) {
-      const r = 0.6;
-      const disc = new THREE.CircleGeometry(r, 16);
+      const disc = new THREE.CircleGeometry(0.6, 16);
       disc.rotateX(-Math.PI / 2);
       const im = new THREE.InstancedMesh(disc, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: L.opacity ?? 1, depthWrite: false }), pts.length);
       const M = new THREE.Matrix4();
-      pts.forEach((p, i) => { const s = toS(p); M.makeTranslation(s.x, s.y + 0.02, s.z); im.setMatrixAt(i, M); });
+      pts.forEach(([E, N], i) => { const s = sceneReq(E, N, 0.15); M.makeTranslation(s.x, s.y + 0.02, s.z); im.setMatrixAt(i, M); });
       im.renderOrder = -8 + idx;
       grp.add(im);
     }
@@ -5189,11 +5456,11 @@ function buildDataLayer(L) {
   dataGroup.add(grp);
 }
 function rebuildDataLayers() { D.layers.forEach((L) => { if (L.state === 'ok') buildDataLayer(L); }); updateDataMarker(); requestRender(); markPlanDirty(0); }
-function reloadDataLayers() { D.layers.filter((L) => L.visible).forEach((L) => { L.img = null; L.features = null; loadDataLayer(L); }); }
+function reloadDataLayers() { D.layers.filter((L) => L.visible).forEach((L) => { L.img = null; L.features = null; L.dem = null; L.i3s = null; loadDataLayer(L); }); }
 function addDataLayer(def) {
-  if (D.layers.some((l) => l.src.url === def.src.url && (l.src.layers || '') === (def.src.layers || ''))) { toast('Tato vrstva už je přidaná.'); return; }
+  if (D.layers.some((l) => l.src.url === def.src.url && l.src.type === def.src.type && (l.src.layers || '') === (def.src.layers || ''))) { toast('Tato vrstva už je přidaná.'); return; }
   const L = { id: ++D.seq, name: def.name, note: def.note || '', src: { ...def.src }, visible: true, opacity: def.src.type === 'agsfeat' ? 1 : (def.opacity ?? 1), state: 'idle' };
-  D.layers.push(L);
+  if (def.src.type === 'agsterrain') D.layers.unshift(L); else D.layers.push(L); // terén patří dospod
   saveDataLayers();
   loadDataLayer(L);
   renderDataPanel();
@@ -5285,11 +5552,20 @@ function dataIdentifyScreen(cx, cy) {
   ray.setFromCamera(ptr, camera);
   const gy = dataScene(F, 0, 0, dataGroundH(F), 0);
   // nejdřív model (zasažený bod), jinak rovina podkladu
-  const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false).filter((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
-  let P = hits[0]?.point;
+  const targets = S.meshes.filter((m) => m.visible);
+  dataGroup.traverse((o) => { if (o.isMesh && (o.userData.i3s || o.userData.dem)) { let v = true; for (let p0 = o; p0; p0 = p0.parent) if (!p0.visible) v = false; if (v) targets.push(o); } });
+  dataGroup.updateMatrixWorld(true);
+  const hits = ray.intersectObjects(targets, false).filter((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
+  const hit = hits[0];
+  let P = hit?.point;
   if (!P) { P = new THREE.Vector3(); if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy.y), P)) return; }
   const l = toIfcPoint(P);
-  dataIdentify(...F.toReq(l.x, l.y));
+  let extra = null;
+  if (hit?.object.userData.i3s) {
+    const L = D.layers.find((x) => x.obj && x.obj.getObjectById(hit.object.id));
+    extra = { i3s: { L, ...hit.object.userData.i3s, face: hit.faceIndex } };
+  }
+  dataIdentify(...F.toReq(l.x, l.y), extra);
 }
 function dataIdentifyPlan(p) {
   const F = dataFrame();
@@ -5311,15 +5587,29 @@ function segDist(px, py, [x1, y1], [x2, y2]) {
   const t = L2 ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / L2)) : 0;
   return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
 }
-async function dataIdentify(E, N) {
+async function dataIdentify(E, N, extra) {
   D.infoAt = { E, N };
   updateDataMarker();
   const F = dataFrame();
   const res = [];
   D.infoRes = res;
+  const dem = activeDem();
+  const th = dem ? demHeight(dem, E, N) : null;
+  if (th != null) res.push({ layer: 'Terén', rows: [[`Výška terénu ${S.geo?.jtsk ? '(Bpv)' : '(H)'}`, nf3s.format(th)], ['Rozdíl proti ±0,000 modelu', `${th - F.H(0) >= 0 ? '+' : ''}${nf3s.format(th - F.H(0))} m`]] });
   showPanel('data');
   renderDataPanel();
   updatePlanMarker(); requestRender();
+  if (extra?.i3s?.L) {
+    const { L, n, g, face } = extra.i3s;
+    let k = -1;
+    if (g.faceRange) for (let i = 0; i < g.faceRange.length / 2; i++) if (face >= g.faceRange[2 * i] && face <= g.faceRange[2 * i + 1]) { k = i; break; }
+    if (k >= 0) {
+      const rows = await i3sAttributes(L, n, k).catch(() => []);
+      if (!rows.length && g.featureId) rows.push(['ID prvku', String(g.featureId[k])]);
+      res.push({ layer: L.name, rows });
+      if (D.infoRes === res) renderDataPanel();
+    }
+  }
   const tolM = Math.max(1, 12 / (plan.view?.ppm || 10));
   for (const L of D.layers) {
     if (!L.visible || L.state !== 'ok') continue;
@@ -5369,6 +5659,19 @@ function attrRows(attrs, alias) {
 async function inspectService(raw) {
   let url = raw.trim();
   if (!/^https:\/\//i.test(url) && !(location.protocol === 'http:' && /^http:\/\//i.test(url))) throw new Error('Zadejte adresu začínající https:// (aplikace běží na https, http služby prohlížeč zablokuje).');
+  const scene = url.match(/^(.*\/SceneServer)(\/layers\/(\d+))?\/?(\?.*)?$/i);
+  if (scene) {
+    const lid = scene[3] ?? 0;
+    const info = await fetchJson(`${scene[1]}/layers/${lid}?f=json`);
+    return [{ name: info.name || 'Scéna', note: `SceneServer · ${info.layerType || ''}`, src: { type: 'i3s', url: `${scene[1]}/layers/${lid}` }, custom: true }];
+  }
+  if (/\/ImageServer\/?(\?.*)?$/i.test(url)) {
+    const base0 = url.replace(/\?.*$/, '').replace(/\/+$/, '');
+    const info = await fetchJson(`${base0}?f=json`);
+    const out0 = [{ name: `${info.name || 'Rastr'} (obrázek)`, note: 'ArcGIS ImageServer', src: { type: 'agsimg', url: base0 }, custom: true }];
+    if (info.bandCount === 1 && /F32|F64|S16|S32|U16/i.test(info.pixelType || '')) out0.unshift({ name: `${info.name || 'Rastr'} jako terén`, note: `výšky, buňka ${nf.format(info.pixelSizeX || 0)} m`, src: { type: 'agsterrain', url: base0, cell: info.pixelSizeX || 2 }, custom: true });
+    return out0;
+  }
   const ags = url.match(/^(.*\/(MapServer|FeatureServer|ImageServer))(\/(\d+))?\/?(\?.*)?$/i);
   if (ags) {
     const base = ags[1], layer = ags[4];
@@ -5429,7 +5732,8 @@ function renderDataPanel() {
   const sec = el('section', 'group');
   sec.appendChild(el('h3', 'group-title', D.layers.length ? 'Přidané vrstvy' : 'Žádné vrstvy'));
   if (!D.layers.length) sec.appendChild(el('p', 'muted small pad-x', 'Vyberte podklad z nabídky níže nebo vložte adresu vlastní služby. Data se načtou jen pro okolí modelu.'));
-  D.layers.forEach((L) => {
+  else if (D.layers.length > 1) sec.appendChild(el('p', 'muted small pad-x', 'Nahoře v seznamu = nahoře v mapě. Pořadí změníte šipkami.'));
+  [...D.layers].reverse().forEach((L) => {
     const row = el('div', 'dl-row');
     const vis = el('button', 'eye');
     vis.type = 'button';
@@ -5439,25 +5743,55 @@ function renderDataPanel() {
       L.visible = !L.visible;
       if (L.visible && L.state !== 'ok') loadDataLayer(L);
       if (L.obj) L.obj.visible = L.visible;
+      if (L.dem) rebuildDataLayers();
       saveDataLayers(); renderDataPanel(); requestRender(); markPlanDirty(0);
     });
     const name = el('div', 'dl-name');
     name.appendChild(el('span', 'row-label', L.name));
-    const st = L.state === 'loading' ? 'Načítám…' : L.state === 'error' ? L.error : L.features ? `${L.features.length.toLocaleString('cs-CZ')} prvků${L.exceeded ? ' (služba vrátila jen část)' : ''}` : (L.note || '');
+    const st = L.state === 'loading' ? 'Načítám…' : L.state === 'error' ? L.error
+      : L.features ? `${L.features.length.toLocaleString('cs-CZ')} prvků${L.exceeded ? ' (služba vrátila jen část)' : ''}`
+      : L.dem ? `Terén ${nf.format(Math.round(L.dem.lo * 10) / 10)} – ${nf.format(Math.round(L.dem.hi * 10) / 10)} m${L.dem === activeDem() ? ', mapy a vektory leží na něm' : ''}`
+      : L.i3s ? `${L.i3s.nodes.length} částí scény${L.i3s.warn ? ` · ${L.i3s.warn}` : ''}` : (L.note || '');
     name.appendChild(el('span', 'row-sub' + (L.state === 'error' ? ' dl-err' : ''), st));
     const rm = el('button', 'ib');
     rm.type = 'button';
     rm.setAttribute('aria-label', `Odebrat vrstvu ${L.name}`);
     rm.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>';
     rm.addEventListener('click', () => removeDataLayer(L));
-    row.append(vis, name, rm);
+    const i = D.layers.indexOf(L);
+    const mv = el('div', 'dl-move');
+    const mk = (lab, dir, dis) => {
+      const b = el('button', 'ib small-ib');
+      b.type = 'button';
+      b.disabled = dis;
+      b.setAttribute('aria-label', `${lab}: ${L.name}`);
+      b.innerHTML = dir > 0 ? '<svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg>' : '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+      b.addEventListener('click', () => {
+        const j = i + dir;
+        if (j < 0 || j >= D.layers.length) return;
+        [D.layers[i], D.layers[j]] = [D.layers[j], D.layers[i]];
+        saveDataLayers(); rebuildDataLayers(); renderDataPanel();
+      });
+      return b;
+    };
+    mv.append(mk('Posunout výš', 1, i === D.layers.length - 1), mk('Posunout níž', -1, i === 0));
+    row.append(vis, name, mv, rm);
     if (L.src.color) { const sw = el('span', 'lg-sw'); sw.style.background = L.src.color; name.prepend(sw); }
     sec.appendChild(row);
     if (L.visible && L.state === 'ok') {
       const op = el('input', 'dl-op');
       op.type = 'range'; op.min = '0.1'; op.max = '1'; op.step = '0.05'; op.value = String(L.opacity ?? 1);
       op.setAttribute('aria-label', `Průhlednost: ${L.name}`);
-      op.addEventListener('input', () => { L.opacity = Number(op.value); L.obj?.traverse((o) => { if (o.material) o.material.opacity = (o.material.map || o.isLineSegments2 || o.isInstancedMesh ? 1 : 0.07) * L.opacity; }); requestRender(); markPlanDirty(150); });
+      op.addEventListener('input', () => {
+        L.opacity = Number(op.value);
+        L.obj?.traverse((o) => {
+          if (!o.material) return;
+          const solid = o.userData.dem || o.userData.i3s;
+          o.material.opacity = (o.material.map || o.isLineSegments2 || o.isInstancedMesh || solid ? 1 : 0.07) * L.opacity;
+          if (solid) { const t = L.opacity < 1; if (o.material.transparent !== t) { o.material.transparent = t; o.material.depthWrite = !t; o.material.needsUpdate = true; } }
+        });
+        requestRender(); markPlanDirty(150);
+      });
       op.addEventListener('change', saveDataLayers);
       sec.appendChild(op);
     }
@@ -5480,7 +5814,8 @@ function renderDataPanel() {
   hReset.addEventListener('click', () => { D.groundH = null; rebuildDataLayers(); renderDataPanel(); });
   const lab = (t, c) => { const w0 = el('label', 'dl-lab'); w0.append(el('span', 'muted small', t), c); return w0; };
   const hWrap = el('div', 'dl-h'); hWrap.append(hIn, hReset);
-  grid.append(lab('Okolí modelu', mSel), lab(`Výška podkladu ${S.geo?.jtsk ? '(Bpv)' : '(H)'}`, hWrap));
+  if (activeDem()) { hIn.disabled = true; hReset.disabled = true; hIn.title = 'Mapy a vektory leží na terénu'; }
+  grid.append(lab('Okolí modelu', mSel), lab(activeDem() ? 'Výška podkladu: podle terénu' : `Výška podkladu ${S.geo?.jtsk ? '(Bpv)' : '(H)'}`, hWrap));
   set.appendChild(grid);
   const infoB = el('button', 'sbtn' + (D.info ? ' primary' : ''), D.info ? 'Info o místě: zapnuto' : 'Info o místě');
   infoB.type = 'button';
@@ -5587,7 +5922,7 @@ function renderDataPanel() {
 function dataOnModelLoaded() {
   D.infoAt = null; D.infoRes = null; D.groundH = null;
   updateDataMarker();
-  D.layers.forEach((L) => { disposeLayerObj(L); L.img = null; L.features = null; L.state = 'idle'; });
+  D.layers.forEach((L) => { disposeLayerObj(L); L.img = null; L.features = null; L.dem = null; L.i3s = null; L.state = 'idle'; });
   if (dataFrame()) D.layers.filter((L) => L.visible).forEach((L) => loadDataLayer(L));
   renderDataPanel();
 }
@@ -5627,3 +5962,4 @@ if (matchMedia('(max-width: 719px)').matches) app.classList.remove('sheet-open')
   }
 })();
 window.__ifc = S;
+window.__ifcView = { camera, dataGroup, renderer };

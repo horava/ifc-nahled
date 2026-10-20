@@ -1,11 +1,12 @@
 // IFC prohlížečka – offline cache.
 // Po každé změně souborů zvyšte VERSION, aby si iPad stáhl novou verzi.
-const VERSION = 'ifc-nahled-v26';
+const VERSION = 'ifc-nahled-v27';
 const FILES = [
   './',
   'index.html',
   'app.js',
   'web-ifc.wasm',
+  'lerc-wasm.wasm',
   'sample.ifc',
   'manifest.webmanifest',
   'LICENSE',
@@ -17,6 +18,7 @@ const FILES = [
   'licenses/proj4-MIT.txt',
   'licenses/three.js-MIT.txt',
   'licenses/web-ifc-MPL-2.0.txt',
+  'licenses/lerc-Apache-2.0.txt',
   'icons/apple-touch-icon.png',
   'icons/icon-192.png',
   'icons/icon-512.png',

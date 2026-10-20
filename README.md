@@ -19,7 +19,7 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - vodorovný, příčný a podélný řez, půdorys podlaží; svislé řezy se samy zarovnají na natočení budovy a jdou ručně natáčet nebo zarovnat kolmo na vybraný prvek
 - měření vzdáleností s přichytáváním k rohům
 - georeference podle IfcMapConversion (IFC4/4.3) nebo ePSet_MapConversion (IFC2x3): mapové souřadnice bodů a prvků, kontroly georeference, sever mapy v půdorysu, export bodů do CSV
-- **mapové podklady a data** (záložka Data, jen u georeferencovaného modelu): nabídka veřejných služeb ČÚZK (ortofoto, katastrální mapa, ZTM, ZABAGED, vrstevnice, RÚIAN parcely, stavební objekty a adresní místa) nebo vlastní adresa veřejné služby WMS či ArcGIS Server (MapServer, FeatureServer, ImageServer); podklad se položí pod model ve 3D i v půdorysu, vektory mají popisky (čísla parcel); „Info o místě“ ukáže atributy po ťuknutí do modelu nebo půdorysu. Služba musí povolovat CORS. Na server se posílá jen výřez okolí modelu.
+- **mapové podklady a data** (záložka Data, jen u georeferencovaného modelu): nabídka veřejných služeb ČÚZK (ortofoto, katastrální mapa, ZTM, ZABAGED, vrstevnice, RÚIAN parcely, stavební objekty a adresní místa, terén DMR 5G a povrch DMP 1G, 3D budovy Brna LoD2) nebo vlastní adresa veřejné služby WMS či ArcGIS Server (MapServer, FeatureServer, ImageServer, SceneServer s 3D objekty); podklad se položí pod model ve 3D i v půdorysu, vektory mají popisky (čísla parcel); „Info o místě“ ukáže atributy po ťuknutí do modelu nebo půdorysu. Služba musí povolovat CORS. Na server se posílá jen výřez okolí modelu. Při načteném terénu (DMR 5G nebo vlastní výškový ImageServer) se mapy a vektory pokládají na terén. Pořadí vrstev jde měnit šipkami.
 - BCF 2.1: záznamy k prvkům (pohled, řez, vybraný prvek, snímek), komentáře, export a import `.bcfzip`
 - práci offline po prvním otevření
 
@@ -102,6 +102,7 @@ Použité knihovny a písma si ponechávají své licence. Přehled je v [`THIRD
 - web-ifc: MPL-2.0 (použitý beze změn, zdroj: https://github.com/ThatOpen/engine_web-ifc)
 - fflate: MIT
 - proj4js (+ mgrs, wkt-parser): MIT
+- lerc: Apache-2.0 (dekodér výškových rastrů)
 - IBM Plex: SIL Open Font License 1.1
 
 V aplikaci jsou licence k dispozici v panelu **Model → O aplikaci a licence**.
