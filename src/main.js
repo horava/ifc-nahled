@@ -51,7 +51,7 @@ const S = {
   classes: new Map(),    // cls -> { visible, count }
   hidden: new Set(), isolated: null, selected: null,
   meshes: [], bbox: new THREE.Box3(), clipOn: false, clipPanel: false, edges: true,
-  measure: { on: false, first: null, list: [] },
+  measure: { on: false, first: null, list: [], preview: null, tri: true },
 };
 
 const geoPts = [];          // body nástroje Souřadnice
@@ -84,6 +84,9 @@ const modelGroup = new THREE.Group();
 scene.add(modelGroup);
 const measureScene = new THREE.Scene();
 const measureMat = new LineMaterial({ linewidth: 3, depthTest: false, transparent: true, worldUnits: false });
+// odvěsny pravoúhlého trojúhelníku měření: svislá a vodorovná
+const legVMat = new LineMaterial({ linewidth: 2.5, depthTest: false, transparent: true, opacity: 0.95, worldUnits: false });
+const legHMat = new LineMaterial({ linewidth: 2.5, depthTest: false, transparent: true, opacity: 0.95, worldUnits: false });
 const clipOutlineMat = new LineMaterial({ linewidth: 2, depthTest: false, transparent: true, opacity: 0.7, worldUnits: false });
 renderer.autoClear = false;
 
@@ -129,10 +132,43 @@ function applyTheme() {
   }
   spaceMat.color.set(cssVar('--space') || '#3b82c4');
   measureMat.color.set(cssVar('--sel') || '#ff7a1a');
+  legVMat.color.set(cssVar('--info') || '#2f5f8a');
+  legHMat.color.set(cssVar('--ok') || '#2f7d4a');
   clipOutlineMat.color.set(cssVar('--accent') || '#c94a10');
   if (typeof S !== 'undefined' && S.color) { try { refreshColoring(); renderLegend(); } catch (e) { /* not ready */ } }
+  try { // terén z datových vrstev má barvu podle režimu
+    dataGroup.traverse((o) => { if (o.userData && o.userData.dem && o.material) o.material.color.set(isDarkTheme() ? '#5d665f' : '#c9cfc4'); });
+  } catch (e) { /* not ready */ }
+  // stavový řádek iPadu (aplikace na ploše) ladí s aktuálním režimem, i když je přepnutý ručně
+  const bg = cssVar('--bg');
+  if (bg) document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', bg));
+  updateThemeBtn();
   requestRender();
 }
+/* přepínač světlý/tmavý režim: výchozí je podle zařízení; ruční volba se pamatuje,
+   a když se shoduje s nastavením zařízení, zapomene se (aplikace pak zase sleduje zařízení) */
+const THEME_KEY = 'ifc-nahled-theme';
+const sysDark = () => { try { return matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) { return false; } };
+const themeIsDark = () => { const t = document.documentElement.getAttribute('data-theme'); return t ? t === 'dark' : sysDark(); };
+function updateThemeBtn() {
+  const b = document.getElementById('btn-theme');
+  if (!b) return;
+  const label = themeIsDark() ? 'Přepnout na světlý režim' : 'Přepnout na tmavý režim';
+  b.setAttribute('aria-label', label);
+  b.title = label;
+}
+function toggleTheme() {
+  const next = themeIsDark() ? 'light' : 'dark';
+  const root = document.documentElement;
+  if ((next === 'dark') === sysDark()) {
+    root.removeAttribute('data-theme');
+    try { localStorage.removeItem(THEME_KEY); } catch (e) { /* private mode */ }
+  } else {
+    root.setAttribute('data-theme', next);
+    try { localStorage.setItem(THEME_KEY, next); } catch (e) { /* private mode */ }
+  }
+}
+document.getElementById('btn-theme')?.addEventListener('click', toggleTheme);
 applyTheme();
 try { matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); } catch (e) { /* old Safari */ }
 new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
@@ -142,6 +178,8 @@ function resize() {
   if (!w || !h) return;
   renderer.setSize(w, h, false);
   measureMat.resolution.set(w, h);
+  legVMat.resolution.set(w, h);
+  legHMat.resolution.set(w, h);
   selLineMat.resolution.set(w, h);
   clipOutlineMat.resolution.set(w, h);
   if (typeof dataGroup !== 'undefined') dataGroup.traverse((o) => { if (o.material?.resolution) o.material.resolution.set(w, h); });
@@ -553,6 +591,7 @@ function setOrbitSel(on) {
 renderer.domElement.addEventListener('pointerdown', (e) => {
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   pinchPrev = null;
+  lastPtrType = e.pointerType || 'touch';
   const single = pointers.size === 1 && (e.pointerType !== 'mouse' || e.button === 0);
   down = single ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
   orbit = single ? { x: e.clientX, y: e.clientY, P: null, moved: false } : null;
@@ -651,9 +690,10 @@ function pick(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
   if (S.data?.info) { dataIdentifyScreen(cx, cy); return; }
   if (coord.on || S.measure.on) {
-    const hit = hitAt(cx, cy);
-    if (!hit) return;
-    if (coord.on) addGeoPoint(hit, cx - r.left, cy - r.top); else measurePoint(hit, cx - r.left, cy - r.top);
+    const sn = findSnap(cx, cy, lastPtrType);
+    if (!sn) return;
+    if (coord.on) addGeoPoint(sn); else measurePoint(sn);
+    if (hoverPos) { hoverSnap = findSnap(hoverPos.x, hoverPos.y, hoverPos.type); showHover(); }
     return;
   }
   const cur = S.cmpSel != null ? `g${S.cmpSel}` : S.refSel ? `r${S.refSel.R.id}:${S.refSel.id}` : S.selected;
@@ -974,68 +1014,271 @@ function toScreen(p) {
   const w = renderer.domElement.clientWidth, h = renderer.domElement.clientHeight;
   return { x: (_v.x + 1) / 2 * w, y: (1 - _v.y) / 2 * h, ok: _v.z > -1 && _v.z < 1 };
 }
-function snapPoint(hit, sx, sy) {
-  if (!hit.face) return { p: hit.point.clone(), snap: false };
-  const pos = hit.object.geometry.attributes.position;
-  let best = null, bestD = 18;
-  for (const i of [hit.face.a, hit.face.b, hit.face.c]) {
-    const w = new THREE.Vector3().fromBufferAttribute(pos, i).applyMatrix4(hit.object.matrixWorld);
-    const sc = toScreen(w);
-    const d = Math.hypot(sc.x - sx, sc.y - sy);
-    if (d < bestD) { bestD = d; best = w; }
-  }
-  return best ? { p: best, snap: true } : { p: hit.point.clone(), snap: false };
+/* ----- přichytávání (Měřit, Souřadnice) -----
+   Kandidáti jsou lomové body a hrany prvků z EdgesGeometry (30°), tedy skutečné hrany, ne úhlopříčky
+   triangulace. Berou se z prvku pod kurzorem i ze sousedních prvků (paprsky v kroužku kolem kurzoru),
+   takže se chytí i roh na obrysu budovy proti obloze. Zakryté body (za jiným prvkem) a body za rovinou
+   řezu se nenabízejí. Lomový bod má přednost před hranou, hrana před plochou. */
+const SNAP_PX = { mouse: 12, pen: 16, touch: 26 };
+const SNAP_TXT = { vertex: 'Přichyceno k lomovému bodu.', edge: 'Přichyceno k hraně.', face: 'Bod na ploše prvku.' };
+let lastPtrType = 'touch';
+const _snRay = new THREE.Raycaster();
+const _snOcc = new THREE.Raycaster();
+const _snPtr = new THREE.Vector2();
+const _sa = new THREE.Vector3(), _sb = new THREE.Vector3(), _sq = new THREE.Vector3(), _sd = new THREE.Vector3();
+function snapTargets() {
+  const t = S.meshes.filter((m) => m.visible);
+  for (const R of S.refs || []) if (R.visible && !R.ghost) for (const m of R.meshes) if (m.visible) t.push(m);
+  return t;
 }
-function dot(snap) { const d = el('div', 'mdot' + (snap ? ' snap' : '')); overlay.appendChild(d); return d; }
-function measurePoint(hit, sx, sy) {
-  const { p, snap } = snapPoint(hit, sx, sy);
+const notCut = (p) => !S.clipOn || clipPlane.distanceToPoint(p) >= -1e-4;
+function castAt(rc, cx, cy, targets) {
+  const r = renderer.domElement.getBoundingClientRect();
+  _snPtr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  rc.setFromCamera(_snPtr, camera);
+  rc.near = 0; rc.far = Infinity;
+  return rc.intersectObjects(targets, false).find((h) => notCut(h.point)) || null;
+}
+function snapEdgesOf(mesh) {
+  const g = mesh.geometry;
+  if (!g.userData.snapEdges) g.userData.snapEdges = new THREE.EdgesGeometry(g, 30);
+  return g.userData.snapEdges.attributes.position;
+}
+function occluded(p, targets) {
+  _sd.copy(p).sub(camera.position);
+  const dist = _sd.length();
+  if (dist < 1e-6) return false;
+  _snOcc.set(camera.position, _sd.divideScalar(dist));
+  _snOcc.near = 0; _snOcc.far = dist;
+  const h = _snOcc.intersectObjects(targets, false).find((x) => notCut(x.point));
+  return !!h && h.distance < dist - Math.max(0.01, dist * 0.003);
+}
+function findSnap(cx, cy, type) {
+  if (S.modelID == null) return null;
+  const R = SNAP_PX[type] || SNAP_PX.touch;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const sx = cx - rect.left, sy = cy - rect.top;
+  const targets = snapTargets();
+  const center = castAt(_snRay, cx, cy, targets);
+  const ray0 = _snRay.ray.clone();
+  const near = new Map();
+  if (center) near.set(center.object, center);
+  const rr = R * 0.75;
+  for (let k = 0; k < 6; k++) {
+    const a = k * Math.PI / 3 + 0.3;
+    const h = castAt(_snOcc, cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, targets);
+    if (h && !near.has(h.object)) near.set(h.object, h);
+  }
+  const verts = [], edges = [];
+  for (const mesh of near.keys()) {
+    const pos = snapEdgesOf(mesh);
+    if (pos.count > 400000) continue;
+    const mw = mesh.matrixWorld;
+    for (let i = 0; i + 1 < pos.count; i += 2) {
+      _sa.fromBufferAttribute(pos, i).applyMatrix4(mw);
+      _sb.fromBufferAttribute(pos, i + 1).applyMatrix4(mw);
+      for (const p of [_sa, _sb]) {
+        const s = toScreen(p);
+        if (!s.ok) continue;
+        const d = Math.hypot(s.x - sx, s.y - sy);
+        if (d < R) verts.push({ d, p: p.clone(), mesh });
+      }
+      ray0.distanceSqToSegment(_sa, _sb, null, _sq);
+      const s = toScreen(_sq);
+      if (s.ok) {
+        const d = Math.hypot(s.x - sx, s.y - sy);
+        if (d < R * 0.7) edges.push({ d, p: _sq.clone(), mesh });
+      }
+    }
+  }
+  const best = (list, n) => {
+    list.sort((a, b) => a.d - b.d);
+    const tried = [];
+    for (const c of list) {
+      if (!notCut(c.p) || tried.some((q) => q.distanceToSquared(c.p) < 1e-8)) continue;
+      if (tried.length >= n) break;
+      tried.push(c.p);
+      if (!occluded(c.p, targets)) return c;
+    }
+    return null;
+  };
+  const v = best(verts, 4);
+  if (v) return { p: v.p, kind: 'vertex', object: v.mesh };
+  const e = best(edges, 3);
+  if (e) return { p: e.p, kind: 'edge', object: e.mesh };
+  if (center) return { p: center.point.clone(), kind: 'face', object: center.object };
+  return null;
+}
+
+/* ----- měření: přímá vzdálenost + pravoúhlý trojúhelník (svislá a vodorovná odvěsna) ----- */
+const fmtM = (v) => `${nf3.format(v)} m`;
+function dot(kind) {
+  const d = el('div', 'mdot' + (kind === 'vertex' ? ' snap' : kind === 'edge' ? ' edge' : ''));
+  overlay.appendChild(d);
+  return d;
+}
+function triParts(a, b) {
+  const low = a.y <= b.y ? a : b, high = low === a ? b : a;
+  const c = new THREE.Vector3(low.x, high.y, low.z);
+  const dy = high.y - low.y, dh = Math.hypot(b.x - a.x, b.z - a.z);
+  return { low, high, c, dy, dh, d: a.distanceTo(b), legs: dy >= 0.005 && dh >= 0.005 };
+}
+function newLine(mat) {
+  const l = new Line2(new LineGeometry(), mat);
+  l.renderOrder = 999;
+  measureScene.add(l);
+  return l;
+}
+function setLine(l, a, b) {
+  l.geometry.dispose();
+  l.geometry = new LineGeometry();
+  l.geometry.setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
+}
+function buildMeasure(a, b, dots, preview = false) {
+  const m = { dots, preview };
+  m.line = newLine(measureMat);
+  m.vLine = newLine(legVMat);
+  m.hLine = newLine(legHMat);
+  m.label = el('div', 'mlabel' + (preview ? ' preview' : ''));
+  m.vLabel = el('div', 'mlabel leg v' + (preview ? ' preview' : ''));
+  m.hLabel = el('div', 'mlabel leg h' + (preview ? ' preview' : ''));
+  overlay.append(m.label, m.vLabel, m.hLabel);
+  setMeasureGeom(m, a, b);
+  return m;
+}
+function setMeasureGeom(m, a, b) {
+  m.a = a; m.b = b; m.t = triParts(a, b);
+  setLine(m.line, a, b);
+  setLine(m.vLine, m.t.low, m.t.c);
+  setLine(m.hLine, m.t.c, m.t.high);
+  m.label.textContent = fmtM(m.t.d);
+  m.vLabel.textContent = `↕ ${fmtM(m.t.dy)}`;
+  m.hLabel.textContent = `↔ ${fmtM(m.t.dh)}`;
+  applyTriVis(m);
+}
+function applyTriVis(m) {
+  const on = S.measure.tri && m.t.legs;
+  m.vLine.visible = m.hLine.visible = on;
+  m.legsOn = on;
+}
+function disposeMeasure(m) {
+  for (const l of [m.line, m.vLine, m.hLine]) { measureScene.remove(l); l.geometry.dispose(); }
+  for (const n of [m.label, m.vLabel, m.hLabel, ...(m.dots || [])]) n?.remove();
+}
+function measurePoint(sn) {
   const M = S.measure;
   if (!M.first) {
-    M.first = { p, dot: dot(snap) };
-    setMeasureText('Klepněte na druhý bod', snap ? 'První bod přichycen k rohu.' : 'První bod je na ploše prvku.');
+    M.first = { p: sn.p, dot: dot(sn.kind) };
+    setMeasureText('Klepněte na druhý bod', `První bod: ${SNAP_TXT[sn.kind].toLowerCase()}`);
   } else {
-    const a = M.first.p, b = p;
-    const geo = new LineGeometry();
-    geo.setPositions([a.x, a.y, a.z, b.x, b.y, b.z]);
-    const line = new Line2(geo, measureMat);
-    line.renderOrder = 999;
-    measureScene.add(line);
-    const label = el('div', 'mlabel', `${nf3.format(a.distanceTo(b))} m`);
-    overlay.appendChild(label);
-    const m = { a, b, line, dots: [M.first.dot, dot(snap)], label };
+    const m = buildMeasure(M.first.p, sn.p, [M.first.dot, dot(sn.kind)]);
     M.list.push(m);
     M.first = null;
     showMeasureResult(m);
   }
+  updatePreview(null);
   requestRender();
 }
+function measureSub(t) {
+  return `vodorovně ${nf3.format(t.dh)} · svisle ${nf3.format(t.dy)} m`;
+}
 function showMeasureResult(m) {
-  const d = m.a.distanceTo(m.b);
-  const dy = Math.abs(m.b.y - m.a.y);
-  const dh = Math.hypot(m.b.x - m.a.x, m.b.z - m.a.z);
-  setMeasureText(`${nf3.format(d)} m`, `vodorovně ${nf3.format(dh)} m · svisle ${nf3.format(dy)} m`);
+  setMeasureText(fmtM(m.t.d), measureSub(m.t));
 }
 function setMeasureText(main, sub) { $('#m-main').textContent = main; $('#m-sub').textContent = sub; }
+function idleMeasureText() {
+  const M = S.measure;
+  if (M.first) setMeasureText('Klepněte na druhý bod', 'Esc nebo Smazat zruší rozpracované měření.');
+  else if (M.list.length) showMeasureResult(M.list[M.list.length - 1]);
+  else setMeasureText('Klepněte na první bod', 'Body se přichytávají k lomovým bodům a hranám prvků.');
+}
+/* náhled druhého bodu při najetí myší nebo Apple Pencil */
+function updatePreview(p) {
+  const M = S.measure;
+  if (!p || !M.first || !M.on) {
+    if (M.preview) { disposeMeasure(M.preview); M.preview = null; requestRender(); }
+    return;
+  }
+  if (!M.preview) M.preview = buildMeasure(M.first.p, p, [], true);
+  else setMeasureGeom(M.preview, M.first.p, p);
+  setMeasureText(fmtM(M.preview.t.d), measureSub(M.preview.t));
+}
+const snapHint = el('div', 'snaphint');
+snapHint.hidden = true;
+let hoverReq = 0, hoverPos = null, hoverSnap = null;
+function runHover() {
+  hoverReq = 0;
+  if (!hoverPos || !(S.measure.on || coord.on)) return;
+  hoverSnap = findSnap(hoverPos.x, hoverPos.y, hoverPos.type);
+  showHover();
+}
+function showHover() {
+  const sn = hoverSnap;
+  if (!sn) {
+    snapHint.hidden = true;
+    updatePreview(null);
+    if (S.measure.on) idleMeasureText();
+    requestRender();
+    return;
+  }
+  if (!snapHint.isConnected) overlay.appendChild(snapHint);
+  snapHint.className = `snaphint ${sn.kind}`;
+  snapHint.hidden = false;
+  if (S.measure.on) {
+    if (S.measure.first) updatePreview(sn.p);
+    else setMeasureText('Klepněte na první bod', SNAP_TXT[sn.kind]);
+  }
+  requestRender();
+}
+function clearHover() {
+  hoverPos = null; hoverSnap = null;
+  snapHint.hidden = true;
+  updatePreview(null);
+  if (S.measure.on) idleMeasureText();
+  requestRender();
+}
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch' || !(S.measure.on || coord.on)) return;
+  if (pointers.size) { if (hoverPos) clearHover(); return; } // tažení = otáčení pohledu
+  hoverPos = { x: e.clientX, y: e.clientY, type: e.pointerType || 'mouse' };
+  if (!hoverReq) hoverReq = requestAnimationFrame(runHover);
+});
+renderer.domElement.addEventListener('pointerleave', () => { if (hoverPos) clearHover(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !S.measure.on || !S.measure.first) return;
+  S.measure.first.dot.remove();
+  S.measure.first = null;
+  updatePreview(null);
+  idleMeasureText();
+  requestRender();
+});
 function updateOverlay() {
   const M = S.measure;
-  const place = (node, p) => {
+  const place = (node, p, off) => {
     const s = toScreen(p);
-    node.hidden = !s.ok;
+    node.hidden = off || !s.ok;
     node.style.left = `${s.x}px`; node.style.top = `${s.y}px`;
   };
   if (M.first) place(M.first.dot, M.first.p);
-  for (const m of M.list) {
-    place(m.dots[0], m.a); place(m.dots[1], m.b);
+  const all = M.preview ? [...M.list, M.preview] : M.list;
+  for (const m of all) {
+    if (m.dots[0]) place(m.dots[0], m.a);
+    if (m.dots[1]) place(m.dots[1], m.b);
     place(m.label, _mid.copy(m.a).add(m.b).multiplyScalar(0.5));
+    place(m.vLabel, _mid.copy(m.t.low).add(m.t.c).multiplyScalar(0.5), !m.legsOn);
+    place(m.hLabel, _mid.copy(m.t.c).add(m.t.high).multiplyScalar(0.5), !m.legsOn);
   }
+  if (hoverSnap && !snapHint.hidden) place(snapHint, hoverSnap.p);
 }
 const _mid = new THREE.Vector3();
 function clearMeasures() {
   const M = S.measure;
-  M.list.forEach((m) => { measureScene.remove(m.line); m.line.geometry.dispose(); });
-  M.list = []; M.first = null;
-  overlay.replaceChildren();
-  setMeasureText('Klepněte na první bod', 'Body se přichytávají k rohům prvků.');
+  M.list.forEach(disposeMeasure);
+  M.list = [];
+  if (M.first) M.first.dot.remove();
+  M.first = null;
+  updatePreview(null);
+  idleMeasureText();
   requestRender();
 }
 function toggleMeasure(force) {
@@ -1043,15 +1286,26 @@ function toggleMeasure(force) {
   M.on = force ?? !M.on;
   if (M.on && coord.on) toggleCoord(false);
   if (!M.on && M.first) { M.first.dot.remove(); M.first = null; }
+  if (!M.on) { updatePreview(null); snapHint.hidden = true; hoverSnap = null; }
   if (M.on) {
     if (S.selected != null) deselect();
-    if (M.list.length) showMeasureResult(M.list[M.list.length - 1]);
-    else setMeasureText('Klepněte na první bod', 'Body se přichytávají k rohům prvků.');
+    idleMeasureText();
   }
   $('#measure-bar').hidden = !M.on;
   updateToolbar();
   requestRender();
 }
+function setMeasureTri(on) {
+  S.measure.tri = on;
+  try { localStorage.setItem('ifc-nahled-measure-tri', on ? '1' : '0'); } catch (e) { /* ignore */ }
+  $('#m-tri').setAttribute('aria-pressed', String(on));
+  for (const m of S.measure.list) applyTriVis(m);
+  if (S.measure.preview) applyTriVis(S.measure.preview);
+  requestRender();
+}
+try { S.measure.tri = localStorage.getItem('ifc-nahled-measure-tri') !== '0'; } catch (e) { S.measure.tri = true; }
+$('#m-tri').setAttribute('aria-pressed', String(S.measure.tri));
+$('#m-tri').addEventListener('click', () => setMeasureTri(!S.measure.tri));
 $('#m-clear').addEventListener('click', clearMeasures);
 $('#m-done').addEventListener('click', () => toggleMeasure(false));
 
@@ -2422,12 +2676,14 @@ function geoPointElName(id) {
   if (!rec) return '';
   try { return S.api.GetLine(S.modelID, id)?.Name?.value || classLabel(rec.cls); } catch (e) { return rec.cls; }
 }
-function addGeoPoint(hit, sx, sy) {
-  const { p, snap } = snapPoint(hit, sx, sy);
-  const id = hit.object.userData.id;
+function addGeoPoint(sn) {
+  const { p } = sn;
+  const snap = sn.kind === 'vertex' ? 'roh' : sn.kind === 'edge' ? 'hrana' : '';
+  const ref = sn.object.userData.ref != null;
+  const id = ref ? null : sn.object.userData.id;
   const n = (geoPts.at(-1)?.n || 0) + 1;
-  const pt = { n, name: `B${n}`, p, snap, el: geoPointElName(id), gid: guidOf(id) };
-  pt.dot = el('div', 'mdot gdot' + (snap ? ' snap' : ''));
+  const pt = { n, name: `B${n}`, p, snap, el: ref ? '' : geoPointElName(id), gid: ref ? '' : guidOf(id) };
+  pt.dot = el('div', 'mdot gdot' + (sn.kind === 'vertex' ? ' snap' : sn.kind === 'edge' ? ' edge' : ''));
   pt.label = el('div', 'glabel', pt.name);
   overlay.append(pt.dot, pt.label);
   geoPts.push(pt);
@@ -2470,18 +2726,19 @@ function updateCoordBar(pt) {
   const last = pt || geoPts.at(-1);
   if (!last) {
     $('#c-main').textContent = 'Klepněte do modelu';
-    $('#c-sub').textContent = S.geo?.ok ? `Souřadnice v ${S.geo.epsg ? 'EPSG:' + S.geo.epsg : 'mapovém systému'}, body se přichytávají k rohům.` : 'Model není georeferencovaný, zobrazí se lokální souřadnice.';
+    $('#c-sub').textContent = S.geo?.ok ? `Souřadnice v ${S.geo.epsg ? 'EPSG:' + S.geo.epsg : 'mapovém systému'}, body se přichytávají k lomovým bodům a hranám.` : 'Model není georeferencovaný, zobrazí se lokální souřadnice.';
     return;
   }
   const [a, b, c] = geoPointRow(last);
   const [la, lb, lc] = geoHeader();
   $('#c-main').textContent = `${last.name}  ${la} ${nf3s.format(a)}  ${lb} ${nf3s.format(b)}`;
-  $('#c-sub').textContent = `${lc} ${nf3s.format(c)}${last.el ? ' · ' + last.el : ''}${last.snap ? ' · roh' : ''}`;
+  $('#c-sub').textContent = `${lc} ${nf3s.format(c)}${last.el ? ' · ' + last.el : ''}${last.snap ? ' · ' + last.snap : ''}`;
 }
 function toggleCoord(force) {
   coord.on = force ?? !coord.on;
   if (coord.on && S.measure.on) toggleMeasure(false);
   if (coord.on && S.selected != null) deselect();
+  if (!coord.on && !S.measure.on) { snapHint.hidden = true; hoverSnap = null; requestRender(); }
   $('#btn-coord').setAttribute('aria-pressed', String(coord.on));
   updateCoordBar();
 }
@@ -6719,4 +6976,4 @@ if (matchMedia('(max-width: 719px)').matches) app.classList.remove('sheet-open')
   }
 })();
 window.__ifc = S;
-window.__ifcView = { camera, dataGroup, renderer, renderFrame, scene };
+window.__ifcView = { camera, dataGroup, renderer, renderFrame, scene, findSnap, toScreen };
