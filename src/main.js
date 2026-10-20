@@ -211,7 +211,9 @@ function materialFor(c) {
   const key = [c.x, c.y, c.z, c.w].map((v) => v.toFixed(3)).join(',');
   let m = matCache.get(key);
   if (!m) {
-    m = new THREE.MeshLambertMaterial({ color: new THREE.Color(c.x, c.y, c.z), side: THREE.DoubleSide });
+    // barvy v IFC jsou zadané v sRGB (jak je vidí autor v Revitu/Archicadu); bez převodu
+    // je three.js bere jako lineární a po výstupní korekci vyjdou vybledlé
+    m = new THREE.MeshLambertMaterial({ color: new THREE.Color().setRGB(c.x, c.y, c.z, THREE.SRGBColorSpace), side: THREE.DoubleSide });
     if (c.w < 0.999) { m.transparent = true; m.opacity = Math.max(c.w, 0.15); m.depthWrite = false; }
     matCache.set(key, m);
   }
