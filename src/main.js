@@ -5409,14 +5409,125 @@ function reqToSceneMatrix(F) {
   const ex = f(1, 0, 0).sub(o), ny = f(0, 1, 0).sub(o), hz = f(0, 0, 1).sub(o);
   return new THREE.Matrix4().makeBasis(ex, ny, hz).setPosition(o);
 }
+/* půdorysná stopa načtených IFC modelů (hlavní + viditelné podkladové) jako mřížka 0,5 m ve scéně */
+const FOOT_SKIP = new Set(['IFCSITE', 'IFCGEOGRAPHICELEMENT', 'IFCSPACE', 'IFCOPENINGELEMENT', 'IFCVIRTUALELEMENT', 'IFCANNOTATION', 'IFCGRID', 'IFCCIVILELEMENT']);
+let footCache = null;
+function ifcFootprint() {
+  const sig = `${S.modelGen}|${S.fileName}|${(S.refs || []).filter((R) => R.visible).map((R) => `${R.id}`).join(',')}`;
+  if (footCache?.sig === sig) return footCache;
+  const meshes = [];
+  for (const rec of S.elements.values()) if (!FOOT_SKIP.has(U(rec.cls))) meshes.push(...rec.meshes);
+  for (const R of S.refs || []) {
+    if (!R.visible) continue;
+    if (!R.cls) R.cls = new Map();
+    for (const m of R.meshes) {
+      const id = m.userData.id;
+      if (!R.cls.has(id)) { let c = ''; try { c = U(S.api.GetNameFromTypeCode(S.api.GetLineType(R.mid, id))); } catch (e) { /* ignore */ } R.cls.set(id, c); }
+      if (!FOOT_SKIP.has(R.cls.get(id))) meshes.push(m);
+    }
+  }
+  let x0 = Infinity, z0 = Infinity, x1 = -Infinity, z1 = -Infinity;
+  const tmp = new THREE.Box3();
+  for (const m of meshes) {
+    m.updateMatrixWorld();
+    if (!m.geometry.boundingBox) m.geometry.computeBoundingBox();
+    tmp.copy(m.geometry.boundingBox).applyMatrix4(m.matrixWorld);
+    x0 = Math.min(x0, tmp.min.x); z0 = Math.min(z0, tmp.min.z); x1 = Math.max(x1, tmp.max.x); z1 = Math.max(z1, tmp.max.z);
+  }
+  if (!meshes.length || !Number.isFinite(x0)) { footCache = { sig, empty: true }; return footCache; }
+  let cell = 0.5;
+  while (((x1 - x0) / cell) * ((z1 - z0) / cell) > 4e6) cell *= 2;
+  x0 -= cell * 2; z0 -= cell * 2;
+  const nx = Math.ceil((x1 - x0) / cell) + 3, nz = Math.ceil((z1 - z0) / cell) + 3;
+  const occ = new Uint8Array(nx * nz);
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  for (const m of meshes) {
+    const pos = m.geometry.attributes.position, ix = m.geometry.index?.array;
+    if (!pos || !ix) continue;
+    for (let t = 0; t < ix.length; t += 3) {
+      a.fromBufferAttribute(pos, ix[t]).applyMatrix4(m.matrixWorld);
+      b.fromBufferAttribute(pos, ix[t + 1]).applyMatrix4(m.matrixWorld);
+      c.fromBufferAttribute(pos, ix[t + 2]).applyMatrix4(m.matrixWorld);
+      const d = (b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z);
+      if (Math.abs(d) < 1e-6) continue; // svislé plochy půdorys nepokrývají
+      const i0 = Math.max(0, Math.floor((Math.min(a.x, b.x, c.x) - x0) / cell)), i1 = Math.min(nx - 1, Math.floor((Math.max(a.x, b.x, c.x) - x0) / cell));
+      const j0 = Math.max(0, Math.floor((Math.min(a.z, b.z, c.z) - z0) / cell)), j1 = Math.min(nz - 1, Math.floor((Math.max(a.z, b.z, c.z) - z0) / cell));
+      for (let j = j0; j <= j1; j++) {
+        const pz = z0 + (j + 0.5) * cell;
+        for (let i = i0; i <= i1; i++) {
+          const px = x0 + (i + 0.5) * cell;
+          const w0 = ((b.x - px) * (c.z - pz) - (c.x - px) * (b.z - pz)) / d;
+          const w1 = ((c.x - px) * (a.z - pz) - (a.x - px) * (c.z - pz)) / d;
+          if (w0 >= -1e-9 && w1 >= -1e-9 && w0 + w1 <= 1 + 1e-9) occ[j * nx + i] = 1;
+        }
+      }
+    }
+  }
+  // rozšíření o jednu buňku: tolerance mezi LoD2 modelem a IFC
+  const dil = occ.slice();
+  for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+    if (!occ[j * nx + i]) continue;
+    for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+      const ii = i + di, jj = j + dj;
+      if (ii >= 0 && jj >= 0 && ii < nx && jj < nz) dil[jj * nx + ii] = 1;
+    }
+  }
+  footCache = { sig, x0, z0, cell, nx, nz, occ: dil };
+  return footCache;
+}
+function footInside(fp, x, z) {
+  const i = Math.floor((x - fp.x0) / fp.cell), j = Math.floor((z - fp.z0) / fp.cell);
+  return i >= 0 && j >= 0 && i < fp.nx && j < fp.nz && fp.occ[j * fp.nx + i] === 1;
+}
+/* budovy scény, které z víc než poloviny střechy leží ve stopě IFC modelu, se skryjí (trojúhelníky se zdegenerují,
+   takže zůstane platné číslování prvků pro „Info o místě“) */
+function i3sHideUnderIfc(mesh, g, fp) {
+  if (!g.faceRange || fp.empty) return { pos: g.position, hidden: 0 };
+  const pos = g.position.slice();
+  const m = mesh.matrix;
+  const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3(), ab = new THREE.Vector3(), ac = new THREE.Vector3();
+  let hidden = 0;
+  for (let k = 0; k < g.faceRange.length / 2; k++) {
+    const t0 = g.faceRange[2 * k], t1 = g.faceRange[2 * k + 1];
+    let flat = 0, flatIn = 0, all = 0, allIn = 0;
+    for (let t = t0; t <= t1; t++) {
+      const o = t * 9;
+      va.set(pos[o], pos[o + 1], pos[o + 2]).applyMatrix4(m);
+      vb.set(pos[o + 3], pos[o + 4], pos[o + 5]).applyMatrix4(m);
+      vc.set(pos[o + 6], pos[o + 7], pos[o + 8]).applyMatrix4(m);
+      ab.subVectors(vb, va); ac.subVectors(vc, va);
+      const n = ab.cross(ac), A = n.length() / 2;
+      if (A < 1e-6) continue;
+      const inside = footInside(fp, (va.x + vb.x + vc.x) / 3, (va.z + vb.z + vc.z) / 3);
+      all += A; if (inside) allIn += A;
+      if (Math.abs(n.y) / (2 * A) > 0.3) { flat += A; if (inside) flatIn += A; }
+    }
+    const frac = flat > 0 ? flatIn / flat : all > 0 ? allIn / all : 0;
+    if (frac > 0.5) {
+      hidden++;
+      for (let t = t0; t <= t1; t++) {
+        const o = t * 9;
+        pos[o + 3] = pos[o + 6] = pos[o]; pos[o + 4] = pos[o + 7] = pos[o + 1]; pos[o + 5] = pos[o + 8] = pos[o + 2];
+      }
+    }
+  }
+  return { pos, hidden };
+}
 function buildI3S(L, F) {
   const grp = new THREE.Group();
   const M = reqToSceneMatrix(F);
+  const hideIfc = L.src.hideUnderIfc !== false;
+  const fp = hideIfc ? ifcFootprint() : null;
+  L.hiddenCount = 0;
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, transparent: (L.opacity ?? 1) < 1, opacity: L.opacity ?? 1 });
   const plain = new THREE.MeshLambertMaterial({ color: 0xd9d4cc, side: THREE.DoubleSide, transparent: (L.opacity ?? 1) < 1, opacity: L.opacity ?? 1 });
   for (const { n, g } of L.i3s.nodes) {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(g.position, 3));
+    const c0 = n.obb.center;
+    const mtx = new THREE.Matrix4().copy(M).multiply(new THREE.Matrix4().makeTranslation(c0[0], c0[1], c0[2]));
+    let posArr = g.position;
+    if (fp) { const r = i3sHideUnderIfc({ matrix: mtx }, g, fp); posArr = r.pos; L.hiddenCount += r.hidden; }
+    geo.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
     if (g.normal) geo.setAttribute('normal', new THREE.BufferAttribute(g.normal, 3)); else geo.computeVertexNormals();
     let m0 = plain;
     if (g.color) { geo.setAttribute('color', new THREE.BufferAttribute(g.color, 4, true)); m0 = mat; mat.vertexAlphas = false; }
@@ -5925,7 +6036,7 @@ function renderDataPanel() {
     const st = L.state === 'loading' ? 'Načítám…' : L.state === 'error' ? L.error
       : L.features ? `${L.features.length.toLocaleString('cs-CZ')} prvků${L.exceeded ? ' (služba vrátila jen část)' : ''}`
       : L.dem ? `Terén ${nf.format(Math.round(L.dem.lo * 10) / 10)} – ${nf.format(Math.round(L.dem.hi * 10) / 10)} m${L.dem === activeDem() ? ', mapy a vektory leží na něm' : ''}`
-      : L.i3s ? `${L.i3s.nodes.length} částí scény${L.i3s.warn ? ` · ${L.i3s.warn}` : ''}` : (L.note || '');
+      : L.i3s ? `${L.i3s.nodes.length} částí scény${L.src.hideUnderIfc !== false && L.hiddenCount ? ` · skryto ${L.hiddenCount} pod IFC` : ''}${L.i3s.warn ? ` · ${L.i3s.warn}` : ''}` : (L.note || '');
     name.appendChild(el('span', 'row-sub' + (L.state === 'error' ? ' dl-err' : ''), st));
     const rm = el('button', 'ib');
     rm.type = 'button';
@@ -5952,6 +6063,16 @@ function renderDataPanel() {
     row.append(vis, name, mv, rm);
     if (L.src.color) { const sw = el('span', 'lg-sw'); sw.style.background = L.src.color; name.prepend(sw); }
     sec.appendChild(row);
+    if (L.visible && L.state === 'ok' && L.i3s) {
+      const on = L.src.hideUnderIfc !== false;
+      const hb = el('button', 'sbtn mini-btn dl-hide' + (on ? ' primary' : ''), on ? 'Skrývat budovy pod IFC: zapnuto' : 'Skrývat budovy pod IFC');
+      hb.type = 'button';
+      hb.setAttribute('aria-pressed', String(on));
+      hb.title = 'Budovy scény, které leží v půdorysu načtených IFC modelů, se nezobrazí';
+      hb.addEventListener('click', () => { L.src.hideUnderIfc = !on; saveDataLayers(); buildDataLayer(L); renderDataPanel(); requestRender(); markPlanDirty(0); });
+      const w0 = el('div', 'dl-hide-row'); w0.appendChild(hb);
+      sec.appendChild(w0);
+    }
     if (L.visible && L.state === 'ok') {
       const op = el('input', 'dl-op');
       op.type = 'range'; op.min = '0.1'; op.max = '1'; op.step = '0.05'; op.value = String(L.opacity ?? 1);
@@ -6360,6 +6481,7 @@ async function addRefModel(blob, name, key) {
     alignRef(R);
     S.refs.push(R);
     mid = null;
+    dataIfcChanged();
     hideLoading();
     saveLastSet();
     if (!key) await recentSave(blob, name, R.project);
@@ -6385,6 +6507,7 @@ function removeRef(R, keepSet) {
   refsGroup.remove(R.group);
   try { S.api.CloseModel(R.mid); } catch (e) { /* ignore */ }
   S.refs.splice(S.refs.indexOf(R), 1);
+  dataIfcChanged();
   if (!keepSet) saveLastSet();
   renderModelPanel(); requestRender(); markPlanDirty(0);
 }
@@ -6439,6 +6562,14 @@ async function makeRefMain(R) {
 function refsOnMainLoaded() {
   for (const R of S.refs) { try { alignRef(R); } catch (e) { console.warn('align', e); } }
   if (S.refs.length) { requestRender(); markPlanDirty(0); }
+  dataIfcChanged();
+}
+/* změnila se sada IFC modelů: přestavět 3D scény, které skrývají budovy pod IFC */
+function dataIfcChanged() {
+  footCache = null;
+  let any = false;
+  for (const L of D.layers) if (L.i3s && L.state === 'ok' && L.src.hideUnderIfc !== false) { buildDataLayer(L); any = true; }
+  if (any) { requestRender(); markPlanDirty(0); renderDataPanel(); }
 }
 /* výběr prvku podkladového modelu */
 function selectRef(rid, id) {
@@ -6515,7 +6646,7 @@ function modelsSection() {
     vis.type = 'button';
     vis.innerHTML = R.visible ? EYE : EYE_OFF;
     vis.setAttribute('aria-label', `${R.visible ? 'Skrýt' : 'Zobrazit'}: ${R.name}`);
-    vis.addEventListener('click', () => { R.visible = !R.visible; R.group.visible = R.visible; if (!R.visible && S.refSel?.R === R) deselect(); renderModelPanel(); requestRender(); markPlanDirty(0); });
+    vis.addEventListener('click', () => { R.visible = !R.visible; R.group.visible = R.visible; if (!R.visible && S.refSel?.R === R) deselect(); dataIfcChanged(); renderModelPanel(); requestRender(); markPlanDirty(0); });
     const nm = el('div', 'dl-name');
     const lab = el('span', 'row-label', R.name);
     const sw = el('span', 'lg-sw'); sw.style.background = R.tint; lab.prepend(sw);
