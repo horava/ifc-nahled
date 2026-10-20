@@ -3874,7 +3874,8 @@ function paintModel() {
     if (st) {
       const i = st.byId.get(id);
       const it = i != null ? st.items[i] : st.rest;
-      if (it) { ghost = !!it.ghost; mat = colorMat(it.ghost ? (it.color || ghostColor()) : it.color, U(rec.cls) === 'IFCSPACE', ghost); }
+      // izolované „Nevyplněno“ se kreslí plně šedě, jinak by nebylo vidět
+      if (it) { ghost = !!it.ghost && !(it.missing && st.only === i); mat = colorMat(ghost ? (it.color || ghostColor()) : it.color, U(rec.cls) === 'IFCSPACE', ghost); }
     }
     for (const m of rec.meshes) {
       if (m.userData.baseMat === undefined) m.userData.baseMat = m.material;
@@ -4028,7 +4029,8 @@ function colorByKey(key, keepOnly) {
       items.push({ label: v, color: catColor(i), ids });
     });
   }
-  if (missing.size) items.push({ label: 'Nevyplněno', color: OTHER_COLOR, ids: missing, missing: true });
+  // místnosti bez hodnoty jen průhledně, aby nezakrývaly obarvené (např. zóny přes celé podlaží); v legendě je jde zobrazit samostatně
+  if (missing.size) items.push({ label: 'Nevyplněno', color: OTHER_COLOR, ids: missing, missing: true, ghost: true });
   const prevOnly = keepOnly && S.color?.key === key ? S.color.only : null;
   setColoring({ mode: 'prop', key, title: keyLabel(key), items, rest: { ghost: true }, only: prevOnly });
   if (!keepOnly) showColoredSpaces(items);
@@ -4058,10 +4060,12 @@ function colorBySearch() {
 function setColorOnly(i, silent) {
   const st = S.color;
   if (!st) return;
+  const prev = st.only;
   st.only = i;
   if (i == null) S.isolated = null;
   else S.isolated = new Set(st.items[i].ids);
   if (S.cmp) cmpGroup.visible = i == null || st.items[i]?.removed;
+  if (st.items[prev]?.missing || st.items[i]?.missing) paintModel();
   if (!silent) { applyVisibility(); renderModelPanel(); renderLegend(); }
 }
 function renderLegend() {
