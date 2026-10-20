@@ -143,6 +143,7 @@ function resize() {
   measureMat.resolution.set(w, h);
   selLineMat.resolution.set(w, h);
   clipOutlineMat.resolution.set(w, h);
+  if (typeof dataGroup !== 'undefined') dataGroup.traverse((o) => { if (o.material?.resolution) o.material.resolution.set(w, h); });
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   requestRender();
@@ -374,6 +375,7 @@ async function loadIfc(buffer, fileName) {
     bcfOnModelLoaded();
     geoOnModelLoaded();
     featuresOnModelLoaded();
+    dataOnModelLoaded();
 
     renderModelPanel();
     renderProps();
@@ -630,6 +632,7 @@ let tapCycle = null;
 let cycleHint = 0;
 function pick(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
+  if (S.data?.info) { dataIdentifyScreen(cx, cy); return; }
   if (coord.on || S.measure.on) {
     const hit = hitAt(cx, cy);
     if (!hit) return;
@@ -1056,7 +1059,7 @@ $('#btn-orbit').addEventListener('click', () => setOrbitSel(!S.orbitSel));
 $('#btn-orbit').setAttribute('aria-pressed', String(S.orbitSel));
 $('#btn-edges').addEventListener('click', () => {
   S.edges = !S.edges;
-  modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges && !o.parent?.userData.ghost; });
+  modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges; });
   updateToolbar(); requestRender();
 });
 $('#btn-hide').addEventListener('click', () => {
@@ -1750,6 +1753,7 @@ function updatePlanMarker() {
   const inside = p.x >= -20 && p.y >= -20 && p.x <= w + 20 && p.y <= h + 20;
   planSvg.setAttribute('viewBox', `0 0 ${w} ${h}`);
   let html = '';
+  if (S.data) html += dataPlanLabels();
   if (plan.shown != null) html += roomLabelsSvg(plan.shown);
   if (typeof geoPlanMarks === 'function') html += geoPlanMarks();
   if (inside) html += `<path d="M${p.x},${p.y} L${a1.x},${a1.y} A${L},${L} 0 0 1 ${a2.x},${a2.y} Z" class="pm-cone"/><circle cx="${p.x}" cy="${p.y}" r="7" class="pm-dot"/>`;
@@ -1860,6 +1864,7 @@ planViewEl.addEventListener('wheel', (e) => {
 /* klepnutí: kamera na místo ve výšce očí (1,6 m nad podlahou), směr pohledu zůstane */
 function planTeleport(p) {
   if (!plan.view) return;
+  if (S.data?.info) { dataIdentifyPlan(p); return; }
   const wpt = planWorld(p.x, p.y);
   const f = planStorey();
   const eye = f ? f.floor + 1.6 : camera.position.y;
@@ -3199,6 +3204,7 @@ function showPanel(name) {
   if (name === 'tree') renderTree(true);
   if (name === 'search') { renderSearchPanel(); if (!matchMedia('(hover: none)').matches) setTimeout(() => $('#search-q')?.focus(), 30); }
   if (name === 'cmp') renderCmpPanel();
+  if (name === 'data') renderDataPanel();
   if (name === 'model') renderModelPanel();
   document.querySelector(`.tab[data-tab="${name}"]`)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   app.classList.add('sheet-open');
@@ -3452,9 +3458,10 @@ function flatProps(r) {
   for (const k of Object.keys(r.a)) if (k !== 'GlobalId') out.set(k, fmtVal(r.a[k]));
   return out;
 }
-function keyCatalog(idx) {
+function keyCatalog(idx, onlyIds) {
   const keys = new Map();
-  for (const r of idx.el.values()) {
+  const entries = onlyIds ? onlyIds.map((id) => idx.el.get(id)).filter(Boolean) : idx.el.values();
+  for (const r of entries) {
     const seen = new Set();
     const add = (key, v) => {
       if (seen.has(key) || v == null || v === '') return;
@@ -3473,8 +3480,8 @@ function keyCatalog(idx) {
   return keys;
 }
 /* seznam klíčů pro výběr: atributy, pak sady (abecedně) */
-function keyGroups() {
-  const keys = S.idx?.keys;
+function keyGroups(keysIn) {
+  const keys = keysIn || S.idx?.keys;
   if (!keys) return [];
   const attrs = ATTR_KEYS.filter((k) => keys.has(k)).map((k) => ({ key: k, label: ATTR_LABEL[k] || k, count: keys.get(k).count }));
   const bySet = new Map();
@@ -3495,10 +3502,10 @@ function keyLabel(key) {
   const dot = key.indexOf('.');
   return dot > 0 ? `${key.slice(dot + 1)} (${key.slice(0, dot)})` : key;
 }
-function fillKeySelect(sel, current, emptyLabel) {
+function fillKeySelect(sel, current, emptyLabel, keys) {
   sel.replaceChildren();
   if (emptyLabel) { const o = el('option', null, emptyLabel); o.value = ''; sel.appendChild(o); }
-  for (const g of keyGroups()) {
+  for (const g of keyGroups(keys)) {
     if (!g.items.length) continue;
     const og = document.createElement('optgroup');
     og.label = g.label;
@@ -3824,7 +3831,7 @@ function colorMat(color, space, ghost) {
       m = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide, transparent: true, opacity: space ? 0.04 : 0.09, depthWrite: false });
     } else {
       m = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide });
-      if (space) Object.assign(m, { transparent: true, opacity: 0.55, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
+      if (space) Object.assign(m, { transparent: true, opacity: 0.68, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
     }
     colorMatCache.set(key, m);
   }
@@ -3835,6 +3842,7 @@ function ghostColor() { return cssVar('--muted') || '#8a9490'; }
 function setColoring(state) {
   S.color = state;
   if (state) {
+    if (state.rest === undefined) state.rest = null;
     state.byId = new Map();
     state.items.forEach((it, i) => it.ids.forEach((id) => state.byId.set(id, i)));
     if (state.only == null) state.only = null;
@@ -3843,8 +3851,10 @@ function setColoring(state) {
   renderLegend();
   if (!$('#panel-model').hidden) renderModelPanel();
 }
+const ghostEdgeMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.14, depthWrite: false });
 function paintModel() {
   const st = S.color;
+  ghostEdgeMat.color.copy(edgeMat.color);
   const keep = S.selected;
   if (keep != null) deselect(false);
   for (const [id, rec] of S.elements) {
@@ -3858,7 +3868,7 @@ function paintModel() {
       if (m.userData.baseMat === undefined) m.userData.baseMat = m.material;
       m.material = mat || m.userData.baseMat;
       m.userData.ghost = ghost;
-      for (const c of m.children) if (c.userData.edge) c.visible = S.edges && !ghost;
+      for (const c of m.children) if (c.userData.edge) c.material = ghost ? ghostEdgeMat : edgeMat;
     }
   }
   if (keep != null && S.elements.has(keep)) select(keep, { keepPanel: true });
@@ -3875,13 +3885,35 @@ function refreshColoring() {
   if (S.cmp) cmpGhostMat.color.set(STATUS.removed);
 }
 /* barvení podle vlastnosti */
+/* místnosti modelu (prvky IfcSpace s geometrií) a jejich vlastnosti pro výběr barvení */
+function spaceIds() { return [...S.elements.entries()].filter(([, r]) => U(r.cls) === 'IFCSPACE').map(([id]) => id); }
+function spaceKeys() {
+  if (!S.idx?.ready) return null;
+  if (!S.idx.spaceKeys) {
+    const k = keyCatalog(S.idx, spaceIds());
+    k.delete('Třída'); k.delete('GlobalId');
+    S.idx.spaceKeys = k;
+  }
+  return S.idx.spaceKeys;
+}
+/* barva pro i-tou hodnotu: nejdřív 8 ověřených barev, pak další odstíny po zlatém úhlu */
+function catColor(i) {
+  const dark = isDarkTheme();
+  const pal = dark ? CAT_COLORS.dark : CAT_COLORS.light;
+  if (i < pal.length) return pal[i];
+  const j = i - pal.length;
+  const h = ((j * 137.508 + 22) % 360) / 360;
+  const l = dark ? [0.6, 0.48, 0.7][j % 3] : [0.46, 0.6, 0.36][j % 3];
+  const sat = [0.62, 0.5, 0.7][(j >> 1) % 3];
+  return '#' + new THREE.Color().setHSL(h, sat, l).getHexString();
+}
+/* barvení místností podle vlastnosti; ostatní prvky zprůhlední, legenda ukazuje všechny hodnoty */
 function colorByKey(key, keepOnly) {
   if (!key) { setColoring(null); return; }
   if (!S.idx?.ready) { ensureIndex().then(() => colorByKey(key)).catch(() => {}); return; }
-  const palette = isDarkTheme() ? CAT_COLORS.dark : CAT_COLORS.light;
   const groups = new Map(); const missing = new Set();
   let allNum = true;
-  for (const id of S.elements.keys()) {
+  for (const id of spaceIds()) {
     const v = getProp(S.idx.el.get(id), key);
     if (v == null || v === '') { missing.add(id); continue; }
     if (typeof v !== 'number') allNum = false;
@@ -3890,35 +3922,26 @@ function colorByKey(key, keepOnly) {
     groups.get(k).add(id);
   }
   const items = [];
+  const u = S.idx.units.get(key) || '';
   if (key === 'Podlaží') {
     // pořadí podle výšky, postupná barva
-    const order = S.storeys.filter((s) => s.id !== -1).map((s) => s.name).filter((n) => groups.has(n));
+    const order = S.storeys.filter((s0) => s0.id !== -1).map((s0) => s0.name).filter((n) => groups.has(n));
     order.forEach((n, i) => items.push({ label: n, color: seqColor(order.length > 1 ? i / (order.length - 1) : 0.5), ids: groups.get(n) }));
   } else if (allNum && groups.size) {
+    // čísla: každá hodnota zvlášť, barva podle velikosti
     const vals = [...groups.keys()].sort((a, b) => a - b);
-    if (vals.length <= 6) {
-      vals.forEach((v, i) => items.push({ label: fmtVal(v) + (S.idx.units.get(key) || ''), color: seqColor(vals.length > 1 ? i / (vals.length - 1) : 0.5), ids: groups.get(v) }));
-    } else {
-      const lo = vals[0], hi = vals[vals.length - 1], N = 6, step = (hi - lo) / N || 1;
-      const bins = Array.from({ length: N }, () => new Set());
-      for (const [v, ids] of groups) { const b = Math.min(N - 1, Math.floor((v - lo) / step)); ids.forEach((id) => bins[b].add(id)); }
-      const u = S.idx.units.get(key) || '';
-      bins.forEach((ids, b) => { if (ids.size) items.push({ label: `${nf.format(lo + b * step)} – ${nf.format(lo + (b + 1) * step)}${u}`, color: seqColor(b / (N - 1)), ids }); });
-    }
+    vals.forEach((v, i) => items.push({ label: fmtVal(v) + u, color: seqColor(vals.length > 1 ? i / (vals.length - 1) : 0.5), ids: groups.get(v) }));
   } else {
-    const sorted = [...groups.entries()].sort((a, b) => b[1].size - a[1].size);
-    const lab = (v) => (key === 'Třída' && CLASS_LABELS[U(v)] ? `${CLASS_LABELS[U(v)]}` : String(v));
-    sorted.slice(0, 8).forEach(([v, ids], i) => items.push({ label: lab(v), color: palette[i], ids }));
-    if (sorted.length > 8) {
-      const rest = new Set();
-      sorted.slice(8).forEach(([, ids]) => ids.forEach((id) => rest.add(id)));
-      items.push({ label: `Ostatní (${sorted.length - 8} hodnot)`, color: OTHER_COLOR, ids: rest, other: true });
-    }
+    const coll = new Intl.Collator('cs', { numeric: true });
+    [...groups.keys()].map(String).sort(coll.compare).forEach((v, i) => {
+      const ids = groups.get(v) ?? groups.get(Number(v));
+      items.push({ label: v, color: catColor(i), ids });
+    });
   }
-  if (missing.size) items.push({ label: 'Nevyplněno', ghost: true, ids: missing });
+  if (missing.size) items.push({ label: 'Nevyplněno', color: OTHER_COLOR, ids: missing, missing: true });
   const prevOnly = keepOnly && S.color?.key === key ? S.color.only : null;
-  setColoring({ mode: 'prop', key, title: keyLabel(key), items, only: prevOnly });
-  if (!keepOnly) showColoredSpaces(items.filter((it) => !it.ghost));
+  setColoring({ mode: 'prop', key, title: keyLabel(key), items, rest: { ghost: true }, only: prevOnly });
+  if (!keepOnly) showColoredSpaces(items);
 }
 /* když barvení dopadne na skryté místnosti, zapnout je, jinak by barvy nebyly vidět */
 function showColoredSpaces(items) {
@@ -3985,10 +4008,14 @@ $('#lg-collapse').addEventListener('click', () => { S.legendCollapsed = !S.legen
 $('#lg-title').addEventListener('click', () => { if (S.legendCollapsed) { S.legendCollapsed = false; renderLegend(); } });
 function colorSection() {
   const sec = el('section', 'group color-sec');
-  sec.appendChild(el('h3', 'group-title', 'Barvení podle vlastnosti'));
+  sec.appendChild(el('h3', 'group-title', 'Barvení místností'));
+  if (!S.idx?.ready ? ![...S.classes.keys()].some((k) => U(k) === 'IFCSPACE') : !spaceIds().length) {
+    sec.appendChild(el('p', 'muted small pad-x', 'Model nemá místnosti (IfcSpace) s geometrií.'));
+    return sec;
+  }
   const wrap = el('div', 'color-row');
   const sel = el('select', 'color-key');
-  sel.setAttribute('aria-label', 'Obarvit model podle vlastnosti');
+  sel.setAttribute('aria-label', 'Obarvit místnosti podle vlastnosti');
   if (!S.idx?.ready) {
     const o = el('option', null, 'Připravuji vlastnosti…'); sel.appendChild(o); sel.disabled = true;
     wrap.appendChild(sel);
@@ -3996,15 +4023,16 @@ function colorSection() {
     ensureIndex().catch(() => {});
     return sec;
   }
-  fillKeySelect(sel, S.color?.mode === 'prop' ? S.color.key : '', 'Bez barvení');
+  const skeys = spaceKeys();
+  fillKeySelect(sel, S.color?.mode === 'prop' ? S.color.key : '', 'Bez barvení', skeys);
   sel.addEventListener('change', () => { if (S.color?.only != null) S.isolated = null; colorByKey(sel.value); applyVisibility(); });
   wrap.appendChild(sel);
   sec.appendChild(wrap);
   if (!S.color) {
     const quick = el('div', 'chips color-quick');
-    const keys = S.idx.keys;
-    const cands = ['Podlaží', 'Třída', 'Materiál', 'Typ'];
-    for (const k of [...keys.keys()]) if (/\.(Ucel|Účel|Usage|Category|Kategorie|FireRating|IsExternal)$/i.test(k) && cands.length < 7) cands.push(k);
+    const keys = skeys;
+    const cands = ['Podlaží', 'LongName'];
+    for (const k of [...keys.keys()]) if (/\.(Ucel|Účel|Usage|OccupancyType|Category|Kategorie|FireRating|Oddeleni|Oddělení|Uzivatel|Uživatel)$/i.test(k) && cands.length < 6) cands.push(k);
     cands.filter((k) => keys.has(k)).forEach((k) => {
       const b = el('button', 'chip', keyLabel(k).replace(/ \(.*\)$/, ''));
       b.type = 'button';
@@ -4223,7 +4251,8 @@ async function exportPlanPng() {
     let y = head + 14;
     g.font = `600 11.5px ${sans}`; g.fillStyle = ink;
     g.fillText(S.color.title, w - 190, y); y += 6;
-    for (const it of S.color.items.slice(0, 12)) {
+    const maxN = Math.max(3, Math.floor((h - 40) / 16));
+    for (const it of S.color.items.slice(0, maxN)) {
       y += 16;
       g.fillStyle = it.ghost ? bg : it.color;
       g.fillRect(w - 190, y - 9, 10, 10);
@@ -4913,6 +4942,655 @@ async function exportRoomsXlsx(onlyIds, label) {
 }
 
 $('#cmp-input').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; compareWith(f); });
+
+/* =====================================================================
+   DATA: MAPOVÉ PODKLADY (WMS, ArcGIS) A VEKTOROVÁ DATA (ArcGIS)
+   Výřez kolem modelu se vyžádá v souřadnicích georeference (S-JTSK
+   EPSG:5514 nebo EPSG modelu) a položí se pod model do výšky podkladu.
+   Do půdorysu se dostane sám, protože půdorys je pohled na stejnou scénu.
+   ===================================================================== */
+const CUZK = 'https://ags.cuzk.gov.cz';
+const DATA_CATALOG = [
+  { group: 'Mapy', items: [
+    { key: 'orto', name: 'Ortofoto ČR', note: 'ČÚZK', src: { type: 'agsmap', url: `${CUZK}/arcgis1/rest/services/ORTOFOTO/MapServer`, format: 'jpg' } },
+    { key: 'km', name: 'Katastrální mapa', note: 'ČÚZK, WMS', src: { type: 'wms', url: 'https://services.cuzk.gov.cz/wms/local-km-wms.asp', layers: 'KN' } },
+    { key: 'ztm', name: 'Základní topografická mapa', note: 'ČÚZK', src: { type: 'agsmap', url: `${CUZK}/arcgis1/rest/services/ZTM/MapServer`, format: 'png' } },
+    { key: 'zabaged', name: 'ZABAGED polohopis', note: 'ČÚZK, s atributy', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_POLOHOPIS/MapServer`, format: 'png32', transparent: true, identify: true } },
+    { key: 'vrst', name: 'Vrstevnice', note: 'ČÚZK ZABAGED', src: { type: 'agsmap', url: `${CUZK}/arcgis/rest/services/ZABAGED_VRSTEVNICE/MapServer`, format: 'png32', transparent: true } },
+  ] },
+  { group: 'Katastr a adresy (RÚIAN, vektory s atributy)', items: [
+    { key: 'parcely', name: 'Parcely', note: 'čísla parcel, výměra', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/5`, label: 'cisloparcely', color: '#1baf7a' } },
+    { key: 'budovy', name: 'Stavební objekty', note: 'čísla domovní, podlaží', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/3`, label: 'cisladomovni', color: '#e34948' } },
+    { key: 'adresy', name: 'Adresní místa', note: 'body adres', src: { type: 'agsfeat', url: `${CUZK}/arcgis/rest/services/RUIAN/MapServer/1`, color: '#6250d6' } },
+  ] },
+];
+const DATA_KEY = 'ifc-nahled-data-layers';
+const dataGroup = new THREE.Group();
+dataGroup.name = 'data';
+scene.add(dataGroup);
+const D = {
+  layers: [], margin: 100, groundH: null, info: false, infoAt: null, infoRes: null, seq: 0, inspect: null,
+};
+try {
+  const saved = JSON.parse(localStorage.getItem(DATA_KEY) || 'null');
+  if (saved) { D.margin = saved.margin || 100; (saved.layers || []).forEach((l) => D.layers.push({ ...l, id: ++D.seq, state: 'idle' })); }
+} catch (e) { /* ignore */ }
+function saveDataLayers() {
+  try { localStorage.setItem(DATA_KEY, JSON.stringify({ margin: D.margin, layers: D.layers.map((l) => ({ name: l.name, note: l.note, src: l.src, visible: l.visible, opacity: l.opacity })) })); } catch (e) { /* ignore */ }
+}
+S.data = D;
+
+/* převod mezi lokálními souřadnicemi IFC a souřadnicemi požadavku (EPSG:5514 E/N pro S-JTSK, jinak EPSG modelu) */
+function dataFrame() {
+  const g = S.geo;
+  if (!g?.ok) return null;
+  const sr = g.jtsk ? 5514 : g.epsg;
+  if (!sr) return null;
+  const flip = g.jtsk && (g.jtskPositive || g.epsg === 5513 || g.epsg === 2065) ? -1 : 1;
+  const m = (x, y, z) => { const r = geoMapFromLocal({ x, y, z }); return [flip * r.E, flip * r.N, r.H]; };
+  const o = m(0, 0, 0), ax = m(1, 0, 0), ay = m(0, 1, 0), az = m(0, 0, 1);
+  const bx = [ax[0] - o[0], ax[1] - o[1]], by = [ay[0] - o[0], ay[1] - o[1]];
+  const det = bx[0] * by[1] - bx[1] * by[0];
+  const hz = az[2] - o[2] || 1;
+  return {
+    sr,
+    toReq: (x, y) => [o[0] + bx[0] * x + by[0] * y, o[1] + bx[1] * x + by[1] * y],
+    toLocal: (E, N) => { const dE = E - o[0], dN = N - o[1]; return [(dE * by[1] - dN * by[0]) / det, (bx[0] * dN - bx[1] * dE) / det]; },
+    localZ: (H) => (H - o[2]) / hz,
+    H: (z) => o[2] + hz * z,
+  };
+}
+/* výška podkladu v H (Bpv): výchozí ±0,000 modelu, mírně pod ní kvůli překryvu s podlahou */
+function dataGroundH(F) {
+  if (D.groundH != null) return D.groundH;
+  return F.H(0);
+}
+function dataScene(F, E, N, H, dz = 0) {
+  const [x, y] = F.toLocal(E, N);
+  return toScenePoint(new THREE.Vector3(x, y, F.localZ(H) + dz));
+}
+/* výřez: obálka modelu v souřadnicích požadavku + okolí */
+function dataExtent(F) {
+  const b = S.bbox;
+  if (b.isEmpty()) return null;
+  let e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
+  for (const x of [b.min.x, b.max.x]) for (const z of [b.min.z, b.max.z]) {
+    const l = toIfcPoint(new THREE.Vector3(x, b.min.y, z));
+    const [E, N] = F.toReq(l.x, l.y);
+    e0 = Math.min(e0, E); n0 = Math.min(n0, N); e1 = Math.max(e1, E); n1 = Math.max(n1, N);
+  }
+  const m = D.margin;
+  e0 -= m; n0 -= m; e1 += m; n1 += m;
+  const w = e1 - e0, h = n1 - n0;
+  const px = 2048 / Math.max(w, h);
+  return { e0, n0, e1, n1, W: Math.max(64, Math.round(w * px)), H: Math.max(64, Math.round(h * px)) };
+}
+const qs = (o) => Object.entries(o).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+function imageUrl(src, F, X) {
+  const bbox = [X.e0, X.n0, X.e1, X.n1].map((v) => v.toFixed(3)).join(',');
+  if (src.type === 'wms') {
+    const sep = src.url.includes('?') ? '&' : '?';
+    return `${src.url}${sep}${qs({ SERVICE: 'WMS', VERSION: '1.1.1', REQUEST: 'GetMap', LAYERS: src.layers || '', STYLES: '', SRS: `EPSG:${F.sr}`, BBOX: bbox, WIDTH: X.W, HEIGHT: X.H, FORMAT: src.format || 'image/png', TRANSPARENT: 'TRUE' })}`;
+  }
+  if (src.type === 'agsimg') {
+    return `${src.url}/exportImage?${qs({ bbox, bboxSR: F.sr, imageSR: F.sr, size: `${X.W},${X.H}`, format: 'jpgpng', f: 'image' })}`;
+  }
+  const p = { bbox, bboxSR: F.sr, imageSR: F.sr, size: `${X.W},${X.H}`, format: src.format || 'png32', transparent: src.transparent ? 'true' : 'false', dpi: 96, f: 'image' };
+  if (src.layers) p.layers = `show:${src.layers}`;
+  return `${src.url}/export?${qs(p)}`;
+}
+function loadImage(url) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => res(img);
+    img.onerror = () => rej(new Error('Služba nevrátila obrázek. Buď hlásí chybu, nebo nepovoluje načtení do jiné aplikace (CORS).'));
+    img.src = url;
+  });
+}
+async function fetchJson(url) {
+  let r;
+  try { r = await fetch(url, { mode: 'cors' }); } catch (e) { throw new Error('Službu se nepodařilo zavolat. Je online a povoluje přístup z jiné aplikace (CORS)?'); }
+  if (!r.ok) throw new Error(`Služba vrátila chybu ${r.status}.`);
+  const j = await r.json();
+  if (j?.error) throw new Error(j.error.message || 'Chyba služby.');
+  return j;
+}
+function disposeLayerObj(L) {
+  if (!L.obj) return;
+  L.obj.traverse((o) => { o.geometry?.dispose(); if (o.material) { o.material.map?.dispose(); o.material.dispose(); } });
+  dataGroup.remove(L.obj);
+  L.obj = null;
+}
+/* načtení jedné vrstvy */
+async function loadDataLayer(L) {
+  const F = dataFrame();
+  if (!F) { L.state = 'error'; L.error = 'Model není georeferencovaný.'; return; }
+  const X = dataExtent(F);
+  if (!X) return;
+  const token = ++L.token || (L.token = 1);
+  L.state = 'loading'; L.error = ''; renderDataPanel();
+  try {
+    if (L.src.type === 'agsfeat') {
+      if (!L.info) {
+        const info = await fetchJson(`${L.src.url}?f=json`);
+        L.info = { name: info.name, geometryType: info.geometryType, fields: (info.fields || []).map((f) => ({ name: f.name, alias: f.alias || f.name, type: f.type })), displayField: info.displayField };
+      }
+      const q = await fetchJson(`${L.src.url}/query?${qs({ where: '1=1', geometry: `${X.e0},${X.n0},${X.e1},${X.n1}`, geometryType: 'esriGeometryEnvelope', inSR: F.sr, spatialRel: 'esriSpatialRelIntersects', outFields: '*', returnGeometry: 'true', outSR: F.sr, resultRecordCount: 4000, f: 'json' })}`);
+      if (token !== L.token) return;
+      L.features = q.features || [];
+      L.exceeded = !!q.exceededTransferLimit;
+    } else {
+      const img = await loadImage(imageUrl(L.src, F, X));
+      if (token !== L.token) return;
+      L.img = img; L.ext = X;
+    }
+    L.state = 'ok';
+    buildDataLayer(L);
+  } catch (e) {
+    if (token !== L.token) return;
+    L.state = 'error'; L.error = e.message || String(e);
+  }
+  renderDataPanel();
+  requestRender(); markPlanDirty(0);
+}
+/* sestavení 3D objektů vrstvy (obrázek = deska pod modelem, vektory = čáry a výplně) */
+function buildDataLayer(L) {
+  disposeLayerObj(L);
+  const F = dataFrame();
+  if (!F || L.state !== 'ok') return;
+  const H = dataGroundH(F);
+  const idx = D.layers.indexOf(L);
+  const lift = -0.06 + idx * 0.004;
+  const grp = new THREE.Group();
+  if (L.img) {
+    const X = L.ext;
+    const c = [[X.e0, X.n0], [X.e1, X.n0], [X.e1, X.n1], [X.e0, X.n1]].map(([E, N]) => dataScene(F, E, N, H, lift));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([c[0], c[1], c[2], c[0], c[2], c[3]].flatMap((p) => [p.x, p.y, p.z]), 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2));
+    geo.computeVertexNormals();
+    const tex = new THREE.Texture(L.img);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: L.opacity ?? 1, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = -20 + idx;
+    grp.add(mesh);
+  } else if (L.features) {
+    const col = new THREE.Color(L.src.color || '#2a78d6');
+    const segs = [], tris = [], pts = [];
+    const ringsOf = (g) => g.rings || [];
+    for (const f of L.features) {
+      const g = f.geometry;
+      if (!g) continue;
+      if (g.rings) {
+        // vnější obrysy a díry podle orientace (Esri: vnější po směru hodin)
+        const outer = [];
+        for (const r of ringsOf(g)) {
+          const loc = r.map(([E, N]) => F.toLocal(E, N));
+          for (let i = 0; i + 1 < loc.length; i++) segs.push(loc[i], loc[i + 1]);
+          const v2 = loc.map(([x, y]) => new THREE.Vector2(x, y));
+          if (v2.length > 2 && v2[0].equals(v2[v2.length - 1])) v2.pop();
+          if (v2.length < 3) continue;
+          if (THREE.ShapeUtils.isClockWise(v2) || !outer.length) outer.push({ c: THREE.ShapeUtils.isClockWise(v2) ? v2.reverse() : v2, h: [] });
+          else outer[outer.length - 1].h.push(THREE.ShapeUtils.isClockWise(v2) ? v2 : v2.reverse());
+        }
+        for (const o of outer) {
+          try {
+            const all = [o.c, ...o.h].flat();
+            for (const t of THREE.ShapeUtils.triangulateShape(o.c, o.h)) tris.push(all[t[0]], all[t[1]], all[t[2]]);
+          } catch (e) { /* vadný polygon */ }
+        }
+      } else if (g.paths) {
+        for (const p of g.paths) { const loc = p.map(([E, N]) => F.toLocal(E, N)); for (let i = 0; i + 1 < loc.length; i++) segs.push(loc[i], loc[i + 1]); }
+      } else if (g.x != null) {
+        pts.push(F.toLocal(g.x, g.y));
+      } else if (g.points) {
+        g.points.forEach(([E, N]) => pts.push(F.toLocal(E, N)));
+      }
+    }
+    const zl = F.localZ(H) + lift + 0.012;
+    const toS = (p) => toScenePoint(new THREE.Vector3(p.x ?? p[0], p.y ?? p[1], zl));
+    if (tris.length) {
+      const pos = [];
+      tris.forEach((p) => { const s = toS(p); pos.push(s.x, s.y, s.z); });
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      const m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: 0.07 * (L.opacity ?? 1), depthWrite: false, side: THREE.DoubleSide }));
+      m.renderOrder = -10 + idx;
+      grp.add(m);
+    }
+    if (segs.length) {
+      const pos = [];
+      segs.forEach((p) => { const s = toS(p); pos.push(s.x, s.y + 0.004, s.z); });
+      const lg = new LineSegmentsGeometry().setPositions(pos);
+      const lm = new LineMaterial({ color: col, linewidth: 2, worldUnits: false, transparent: true, opacity: L.opacity ?? 1 });
+      lm.resolution.copy(measureMat.resolution);
+      const ls = new LineSegments2(lg, lm);
+      ls.renderOrder = -9 + idx;
+      grp.add(ls);
+    }
+    if (pts.length) {
+      const r = 0.6;
+      const disc = new THREE.CircleGeometry(r, 16);
+      disc.rotateX(-Math.PI / 2);
+      const im = new THREE.InstancedMesh(disc, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: L.opacity ?? 1, depthWrite: false }), pts.length);
+      const M = new THREE.Matrix4();
+      pts.forEach((p, i) => { const s = toS(p); M.makeTranslation(s.x, s.y + 0.02, s.z); im.setMatrixAt(i, M); });
+      im.renderOrder = -8 + idx;
+      grp.add(im);
+    }
+  }
+  grp.visible = !!L.visible;
+  grp.userData.layer = L.id;
+  L.obj = grp;
+  dataGroup.add(grp);
+}
+function rebuildDataLayers() { D.layers.forEach((L) => { if (L.state === 'ok') buildDataLayer(L); }); updateDataMarker(); requestRender(); markPlanDirty(0); }
+function reloadDataLayers() { D.layers.filter((L) => L.visible).forEach((L) => { L.img = null; L.features = null; loadDataLayer(L); }); }
+function addDataLayer(def) {
+  if (D.layers.some((l) => l.src.url === def.src.url && (l.src.layers || '') === (def.src.layers || ''))) { toast('Tato vrstva už je přidaná.'); return; }
+  const L = { id: ++D.seq, name: def.name, note: def.note || '', src: { ...def.src }, visible: true, opacity: def.src.type === 'agsfeat' ? 1 : (def.opacity ?? 1), state: 'idle' };
+  D.layers.push(L);
+  saveDataLayers();
+  loadDataLayer(L);
+  renderDataPanel();
+}
+function removeDataLayer(L) {
+  L.token = (L.token || 0) + 1;
+  disposeLayerObj(L);
+  D.layers.splice(D.layers.indexOf(L), 1);
+  saveDataLayers();
+  rebuildDataLayers();
+  renderDataPanel();
+}
+
+/* popisky vektorů (čísla parcel, domovní čísla) v půdorysu */
+function featureLabelField(L) {
+  if (L.src.label) return L.src.label;
+  const f = L.info?.fields || [];
+  const cand = f.find((x) => /^(cislo|číslo|name|nazev|název|label)/i.test(x.name) && /String/.test(x.type));
+  return cand?.name || null;
+}
+function dataPlanLabels() {
+  if (!plan.view || !D.layers.length) return '';
+  const F = dataFrame();
+  if (!F) return '';
+  const { w, h } = planSize();
+  let out = '';
+  let n = 0;
+  for (const L of D.layers) {
+    if (!L.visible || L.state !== 'ok' || !L.features) continue;
+    const fld = featureLabelField(L);
+    if (!fld) continue;
+    for (const f of L.features) {
+      const v = f.attributes?.[fld];
+      if (v == null || v === '') continue;
+      const g = f.geometry;
+      let E, N, ext = 0;
+      if (g?.rings?.[0]) {
+        // těžiště nejdelšího prstence
+        let best = g.rings[0];
+        for (const r of g.rings) if (r.length > best.length) best = r;
+        let A = 0, cx = 0, cy = 0, e0 = Infinity, e1 = -Infinity, n0 = Infinity, n1 = -Infinity;
+        for (let i = 0; i + 1 < best.length; i++) {
+          const [x1, y1] = best[i], [x2, y2] = best[i + 1];
+          const c = x1 * y2 - x2 * y1;
+          A += c; cx += (x1 + x2) * c; cy += (y1 + y2) * c;
+          e0 = Math.min(e0, x1); e1 = Math.max(e1, x1); n0 = Math.min(n0, y1); n1 = Math.max(n1, y1);
+        }
+        if (Math.abs(A) < 1e-9) continue;
+        E = cx / (3 * A); N = cy / (3 * A);
+        ext = Math.min(e1 - e0, n1 - n0) * plan.view.ppm;
+      } else if (g?.x != null) { E = g.x; N = g.y; ext = 999; } else continue;
+      const txt = String(v);
+      if (ext < txt.length * 6.5 + 4) continue;
+      const [x, y] = F.toLocal(E, N);
+      const s = toScenePoint(new THREE.Vector3(x, y, 0));
+      const p = planXY(s.x, s.z);
+      if (p.x < -40 || p.y < -20 || p.x > w + 40 || p.y > h + 20) continue;
+      out += `<text class="dl" x="${p.x.toFixed(1)}" y="${(p.y + 4).toFixed(1)}" text-anchor="middle" style="fill:${L.src.color || 'var(--ink)'}">${esc(txt)}</text>`;
+      if (++n > 600) return out;
+    }
+  }
+  if (D.infoAt) {
+    const s = D.infoAt.scene, p = planXY(s.x, s.z);
+    out += `<circle class="dl-pin" cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="6"/>`;
+  }
+  return out;
+}
+
+/* ---------- informace o místě (ťuknutí do modelu nebo půdorysu) ---------- */
+const dataPin = new THREE.Mesh(new THREE.ConeGeometry(0.35, 1.4, 16), new THREE.MeshBasicMaterial({ color: '#d03b3b' }));
+dataPin.geometry.translate(0, 0.7, 0);
+dataPin.geometry.rotateX(Math.PI);
+dataPin.visible = false;
+scene.add(dataPin);
+function updateDataMarker() {
+  if (!D.infoAt) { dataPin.visible = false; return; }
+  const F = dataFrame();
+  if (!F) return;
+  const p = dataScene(F, D.infoAt.E, D.infoAt.N, dataGroundH(F), 0);
+  D.infoAt.scene = p;
+  dataPin.position.copy(p).add(new THREE.Vector3(0, 1.4, 0));
+  dataPin.visible = true;
+}
+function dataIdentifyScreen(cx, cy) {
+  const F = dataFrame();
+  if (!F) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ptr.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const gy = dataScene(F, 0, 0, dataGroundH(F), 0);
+  // nejdřív model (zasažený bod), jinak rovina podkladu
+  const hits = ray.intersectObjects(S.meshes.filter((m) => m.visible), false).filter((h) => !S.clipOn || clipPlane.distanceToPoint(h.point) >= -1e-4);
+  let P = hits[0]?.point;
+  if (!P) { P = new THREE.Vector3(); if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -gy.y), P)) return; }
+  const l = toIfcPoint(P);
+  dataIdentify(...F.toReq(l.x, l.y));
+}
+function dataIdentifyPlan(p) {
+  const F = dataFrame();
+  if (!F || !plan.view) return;
+  const wpt = planWorld(p.x, p.y);
+  const l = toIfcPoint(new THREE.Vector3(wpt.x, 0, wpt.z));
+  dataIdentify(...F.toReq(l.x, l.y));
+}
+function pointInRing(x, y, ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+  }
+  return inside;
+}
+function segDist(px, py, [x1, y1], [x2, y2]) {
+  const dx = x2 - x1, dy = y2 - y1, L2 = dx * dx + dy * dy;
+  const t = L2 ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / L2)) : 0;
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+async function dataIdentify(E, N) {
+  D.infoAt = { E, N };
+  updateDataMarker();
+  const F = dataFrame();
+  const res = [];
+  D.infoRes = res;
+  showPanel('data');
+  renderDataPanel();
+  updatePlanMarker(); requestRender();
+  const tolM = Math.max(1, 12 / (plan.view?.ppm || 10));
+  for (const L of D.layers) {
+    if (!L.visible || L.state !== 'ok') continue;
+    if (L.features) {
+      const hit = L.features.filter((f) => {
+        const g = f.geometry;
+        if (!g) return false;
+        if (g.rings) return g.rings.reduce((ins, r) => (pointInRing(E, N, r) ? !ins : ins), false);
+        if (g.paths) return g.paths.some((p) => p.some((q, i) => i && segDist(E, N, p[i - 1], q) < tolM));
+        if (g.x != null) return Math.hypot(g.x - E, g.y - N) < tolM * 1.5;
+        return false;
+      }).slice(0, 5);
+      const alias = new Map((L.info?.fields || []).map((f) => [f.name, f]));
+      hit.forEach((f) => res.push({ layer: L.name, rows: attrRows(f.attributes, alias) }));
+    } else if (L.src.type === 'agsmap' && L.src.identify !== false && (L.src.identify || L.custom)) {
+      const X = L.ext;
+      try {
+        const j = await fetchJson(`${L.src.url}/identify?${qs({ geometry: `${E},${N}`, geometryType: 'esriGeometryPoint', sr: F.sr, layers: 'visible', tolerance: 4, mapExtent: `${X.e0},${X.n0},${X.e1},${X.n1}`, imageDisplay: `${X.W},${X.H},96`, returnGeometry: 'false', f: 'json' })}`);
+        (j.results || []).slice(0, 8).forEach((r0) => res.push({ layer: `${L.name}: ${r0.layerName}`, rows: attrRows(r0.attributes) }));
+      } catch (e) { res.push({ layer: L.name, text: e.message }); }
+    } else if (L.src.type === 'wms' && L.src.queryable) {
+      const X = L.ext;
+      const i = Math.round((E - X.e0) / (X.e1 - X.e0) * X.W), jy = Math.round((X.n1 - N) / (X.n1 - X.n0) * X.H);
+      const sep = L.src.url.includes('?') ? '&' : '?';
+      const url = `${L.src.url}${sep}${qs({ SERVICE: 'WMS', VERSION: '1.1.1', REQUEST: 'GetFeatureInfo', LAYERS: L.src.layers, QUERY_LAYERS: L.src.queryable, STYLES: '', SRS: `EPSG:${F.sr}`, BBOX: `${X.e0},${X.n0},${X.e1},${X.n1}`, WIDTH: X.W, HEIGHT: X.H, X: i, Y: jy, INFO_FORMAT: 'text/plain', FEATURE_COUNT: 5 })}`;
+      try { const r = await fetch(url, { mode: 'cors' }); const t = (await r.text()).trim(); if (t) res.push({ layer: L.name, text: t.slice(0, 3000) }); } catch (e) { res.push({ layer: L.name, text: 'Služba informace neposkytla.' }); }
+    }
+    if (D.infoRes === res) renderDataPanel();
+  }
+  res.done = true;
+  if (D.infoRes === res) renderDataPanel();
+}
+function attrRows(attrs, alias) {
+  const rows = [];
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === '' || /^(objectid|shape|st_area|st_length|globalid)/i.test(k)) continue;
+    const f = alias?.get(k);
+    let s = v;
+    if (f?.type === 'esriFieldTypeDate' && typeof v === 'number') s = new Date(v).toLocaleDateString('cs-CZ');
+    else if (typeof v === 'number') s = nf.format(v);
+    rows.push([f?.alias || k, String(s)]);
+  }
+  return rows;
+}
+
+/* ---------- vlastní služba: rozpoznání URL ---------- */
+async function inspectService(raw) {
+  let url = raw.trim();
+  if (!/^https:\/\//i.test(url) && !(location.protocol === 'http:' && /^http:\/\//i.test(url))) throw new Error('Zadejte adresu začínající https:// (aplikace běží na https, http služby prohlížeč zablokuje).');
+  const ags = url.match(/^(.*\/(MapServer|FeatureServer|ImageServer))(\/(\d+))?\/?(\?.*)?$/i);
+  if (ags) {
+    const base = ags[1], layer = ags[4];
+    if (layer != null) {
+      const info = await fetchJson(`${base}/${layer}?f=json`);
+      return [{ name: info.name || `Vrstva ${layer}`, note: 'ArcGIS, vektory', src: { type: 'agsfeat', url: `${base}/${layer}` }, custom: true }];
+    }
+    const info = await fetchJson(`${base}?f=json`);
+    const title = info.documentInfo?.Title || info.mapName || info.name || base.split('/').slice(-2, -1)[0];
+    if (/ImageServer$/i.test(base)) return [{ name: title || 'Rastr', note: 'ArcGIS ImageServer', src: { type: 'agsimg', url: base }, custom: true }];
+    const out = [];
+    if (/MapServer$/i.test(base)) out.push({ name: `${title} (mapa)`, note: 'ArcGIS, obrázek všech vrstev', src: { type: 'agsmap', url: base, format: 'png32', transparent: true, identify: true }, custom: true });
+    const canQuery = /Query/i.test(info.capabilities || '') || /FeatureServer$/i.test(base);
+    if (canQuery) (info.layers || []).filter((l) => !l.subLayerIds?.length).slice(0, 60).forEach((l) => out.push({ name: l.name, note: 'vektory s atributy', src: { type: 'agsfeat', url: `${base}/${l.id}` }, custom: true }));
+    return out;
+  }
+  // WMS: GetCapabilities
+  const base = url.replace(/\?.*$/, '');
+  const capUrl = `${base}?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.1.1`;
+  let txt;
+  try { const r = await fetch(capUrl, { mode: 'cors' }); txt = await r.text(); } catch (e) {
+    const err = new Error('Popis služby (GetCapabilities) nejde načíst – služba nejspíš nepovoluje přístup z jiné aplikace (CORS). Můžete zkusit zadat názvy vrstev ručně.');
+    err.manual = base; throw err;
+  }
+  const xml = new DOMParser().parseFromString(txt, 'text/xml');
+  if (!xml.querySelector('Capability')) { const err = new Error('Na adrese není WMS ani ArcGIS služba.'); err.manual = base; throw err; }
+  const F = dataFrame();
+  const srsAll = [...xml.querySelectorAll('Layer > SRS, Layer > CRS')].map((n) => n.textContent.trim().toUpperCase());
+  const okSrs = !F || srsAll.some((s) => s.split(/\s+/).includes(`EPSG:${F.sr}`));
+  const svcTitle = xml.querySelector('Service > Title')?.textContent?.trim() || 'WMS';
+  const out = [];
+  const layers = [...xml.querySelectorAll('Layer')].filter((n) => n.querySelector(':scope > Name'));
+  for (const n of layers.slice(0, 80)) {
+    const name = n.querySelector(':scope > Name').textContent.trim();
+    const title = n.querySelector(':scope > Title')?.textContent?.trim() || name;
+    const q = n.getAttribute('queryable') === '1';
+    out.push({ name: title, note: `WMS · ${svcTitle}`, src: { type: 'wms', url: base, layers: name, queryable: q ? name : '' }, custom: true });
+  }
+  if (!okSrs) out.warn = `Služba v popisu neuvádí souřadnicový systém EPSG:${F.sr}. Mapa se nemusí zobrazit.`;
+  return out;
+}
+
+/* ---------- panel Data ---------- */
+function renderDataPanel() {
+  const root = $('#panel-data');
+  if (!root || root.hidden) return;
+  const keepUrl = $('#data-url')?.value;
+  root.replaceChildren();
+  if (S.modelID == null) { root.appendChild(el('p', 'muted pad', 'Otevřete IFC soubor tlačítkem nahoře.')); return; }
+  const F = dataFrame();
+  if (!F) {
+    const p = el('div', 'notice');
+    p.append(el('span', null, 'Mapové podklady potřebují georeferencovaný model (IfcMapConversion se souřadnicovým systémem, např. EPSG:5514). Tento model georeferenci nemá nebo neznám jeho souřadnicový systém.'));
+    root.appendChild(p);
+    return;
+  }
+  // přidané vrstvy
+  const sec = el('section', 'group');
+  sec.appendChild(el('h3', 'group-title', D.layers.length ? 'Přidané vrstvy' : 'Žádné vrstvy'));
+  if (!D.layers.length) sec.appendChild(el('p', 'muted small pad-x', 'Vyberte podklad z nabídky níže nebo vložte adresu vlastní služby. Data se načtou jen pro okolí modelu.'));
+  D.layers.forEach((L) => {
+    const row = el('div', 'dl-row');
+    const vis = el('button', 'eye');
+    vis.type = 'button';
+    vis.innerHTML = L.visible ? EYE : EYE_OFF;
+    vis.setAttribute('aria-label', `${L.visible ? 'Skrýt' : 'Zobrazit'}: ${L.name}`);
+    vis.addEventListener('click', () => {
+      L.visible = !L.visible;
+      if (L.visible && L.state !== 'ok') loadDataLayer(L);
+      if (L.obj) L.obj.visible = L.visible;
+      saveDataLayers(); renderDataPanel(); requestRender(); markPlanDirty(0);
+    });
+    const name = el('div', 'dl-name');
+    name.appendChild(el('span', 'row-label', L.name));
+    const st = L.state === 'loading' ? 'Načítám…' : L.state === 'error' ? L.error : L.features ? `${L.features.length.toLocaleString('cs-CZ')} prvků${L.exceeded ? ' (služba vrátila jen část)' : ''}` : (L.note || '');
+    name.appendChild(el('span', 'row-sub' + (L.state === 'error' ? ' dl-err' : ''), st));
+    const rm = el('button', 'ib');
+    rm.type = 'button';
+    rm.setAttribute('aria-label', `Odebrat vrstvu ${L.name}`);
+    rm.innerHTML = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>';
+    rm.addEventListener('click', () => removeDataLayer(L));
+    row.append(vis, name, rm);
+    if (L.src.color) { const sw = el('span', 'lg-sw'); sw.style.background = L.src.color; name.prepend(sw); }
+    sec.appendChild(row);
+    if (L.visible && L.state === 'ok') {
+      const op = el('input', 'dl-op');
+      op.type = 'range'; op.min = '0.1'; op.max = '1'; op.step = '0.05'; op.value = String(L.opacity ?? 1);
+      op.setAttribute('aria-label', `Průhlednost: ${L.name}`);
+      op.addEventListener('input', () => { L.opacity = Number(op.value); L.obj?.traverse((o) => { if (o.material) o.material.opacity = (o.material.map || o.isLineSegments2 || o.isInstancedMesh ? 1 : 0.07) * L.opacity; }); requestRender(); markPlanDirty(150); });
+      op.addEventListener('change', saveDataLayers);
+      sec.appendChild(op);
+    }
+  });
+  root.appendChild(sec);
+  // nastavení
+  const set = el('section', 'group');
+  set.appendChild(el('h3', 'group-title', 'Nastavení'));
+  const grid = el('div', 'dl-set');
+  const mSel = el('select', 'color-key');
+  [[50, '50 m'], [100, '100 m'], [250, '250 m'], [500, '500 m'], [1000, '1 km']].forEach(([v, l]) => { const o = el('option', null, l); o.value = String(v); mSel.appendChild(o); });
+  mSel.value = String(D.margin);
+  mSel.addEventListener('change', () => { D.margin = Number(mSel.value); saveDataLayers(); reloadDataLayers(); });
+  const hIn = el('input', 'flt-val');
+  hIn.type = 'number'; hIn.step = '0.1'; hIn.inputMode = 'decimal';
+  hIn.value = dataGroundH(F).toFixed(2);
+  hIn.addEventListener('change', () => { const v = Number(String(hIn.value).replace(',', '.')); if (Number.isFinite(v)) { D.groundH = v; rebuildDataLayers(); } });
+  const hReset = el('button', 'sbtn mini-btn', '±0 modelu');
+  hReset.type = 'button';
+  hReset.addEventListener('click', () => { D.groundH = null; rebuildDataLayers(); renderDataPanel(); });
+  const lab = (t, c) => { const w0 = el('label', 'dl-lab'); w0.append(el('span', 'muted small', t), c); return w0; };
+  const hWrap = el('div', 'dl-h'); hWrap.append(hIn, hReset);
+  grid.append(lab('Okolí modelu', mSel), lab(`Výška podkladu ${S.geo?.jtsk ? '(Bpv)' : '(H)'}`, hWrap));
+  set.appendChild(grid);
+  const infoB = el('button', 'sbtn' + (D.info ? ' primary' : ''), D.info ? 'Info o místě: zapnuto' : 'Info o místě');
+  infoB.type = 'button';
+  infoB.setAttribute('aria-pressed', String(D.info));
+  infoB.title = 'Ťuknutím do modelu nebo půdorysu zjistíte, co je na místě ve vrstvách (parcela, budova…)';
+  infoB.addEventListener('click', () => {
+    D.info = !D.info;
+    if (!D.info) { D.infoAt = null; D.infoRes = null; updateDataMarker(); updatePlanMarker(); requestRender(); }
+    else toast('Ťukněte do modelu nebo do půdorysu.');
+    renderDataPanel();
+  });
+  const ib = el('div', 'pad-x dl-info-row');
+  ib.appendChild(infoB);
+  set.appendChild(ib);
+  root.appendChild(set);
+  // výsledky identifikace
+  if (D.info && D.infoRes) {
+    const r = el('section', 'group');
+    const t = el('h3', 'group-title', `Na místě ${S.geo?.jtsk && geoFormat === 'YX' ? `Y ${nf3s.format(-D.infoAt.E)} X ${nf3s.format(-D.infoAt.N)}` : `E ${nf3s.format(D.infoAt.E)} N ${nf3s.format(D.infoAt.N)}`}`);
+    r.appendChild(t);
+    if (!D.infoRes.length) r.appendChild(el('p', 'muted small pad-x', D.infoRes.done ? 'V zapnutých vrstvách tu nic není.' : 'Zjišťuji…'));
+    D.infoRes.forEach((x) => {
+      if (x.rows) r.appendChild(table(x.layer, x.rows));
+      else { const s0 = el('section', 'pset'); s0.appendChild(el('h3', 'pset-title', x.layer)); const pre = el('pre', 'dl-pre', x.text); s0.appendChild(pre); r.appendChild(s0); }
+    });
+    root.appendChild(r);
+  }
+  // nabídka
+  for (const g of DATA_CATALOG) {
+    const c = el('section', 'group');
+    c.appendChild(el('h3', 'group-title', g.group));
+    for (const it of g.items) {
+      const used = D.layers.some((l) => l.src.url === it.src.url && (l.src.layers || '') === (it.src.layers || ''));
+      const b = el('button', 'dl-cat' + (used ? ' used' : ''));
+      b.type = 'button';
+      b.disabled = used;
+      const tx = el('span', 'dl-name');
+      tx.append(el('span', 'row-label', it.name), el('span', 'row-sub', it.note));
+      b.append(tx, el('span', 'dl-add', used ? 'Přidáno' : '+ Přidat'));
+      b.addEventListener('click', () => addDataLayer(it));
+      c.appendChild(b);
+    }
+    root.appendChild(c);
+  }
+  // vlastní služba
+  const cu = el('section', 'group');
+  cu.appendChild(el('h3', 'group-title', 'Vlastní služba'));
+  const urow = el('div', 'dl-url');
+  const u = el('input', 'search-input');
+  u.id = 'data-url'; u.type = 'url'; u.placeholder = 'https://…/MapServer, …/FeatureServer/0 nebo WMS';
+  u.autocomplete = 'off'; u.spellcheck = false;
+  u.value = keepUrl ?? D.lastUrl ?? '';
+  const go = el('button', 'sbtn primary', 'Načíst');
+  go.type = 'button';
+  urow.append(u, go);
+  cu.appendChild(urow);
+  const outBox = el('div', 'dl-found');
+  cu.appendChild(outBox);
+  cu.appendChild(el('p', 'muted small pad-x', 'Funguje s veřejnými službami WMS a ArcGIS Server (MapServer, FeatureServer, ImageServer). Služba musí povolit přístup z jiné aplikace (CORS) a souřadnicový systém modelu.'));
+  const fd = D.found;
+  if (fd?.busy) outBox.appendChild(el('p', 'muted small pad-x', 'Zjišťuji službu…'));
+  if (fd?.warn) outBox.appendChild(el('p', 'small pad-x dl-err', fd.warn));
+  if (fd?.error) outBox.appendChild(el('p', 'small pad-x dl-err', fd.error));
+  if (fd?.items && !fd.items.length) outBox.appendChild(el('p', 'muted small pad-x', 'Služba neobsahuje žádnou vrstvu, kterou umím zobrazit.'));
+  (fd?.items || []).forEach((it) => {
+    const used = D.layers.some((l) => l.src.url === it.src.url && (l.src.layers || '') === (it.src.layers || ''));
+    const b = el('button', 'dl-cat' + (used ? ' used' : ''));
+    b.type = 'button';
+    b.disabled = used;
+    const tx = el('span', 'dl-name');
+    tx.append(el('span', 'row-label', it.name), el('span', 'row-sub', it.note));
+    b.append(tx, el('span', 'dl-add', used ? 'Přidáno' : '+ Přidat'));
+    b.addEventListener('click', () => addDataLayer(it));
+    outBox.appendChild(b);
+  });
+  if (fd?.manual) {
+    const mrow = el('div', 'dl-url');
+    const li = el('input', 'search-input');
+    li.placeholder = 'Názvy vrstev (LAYERS), oddělené čárkou';
+    const add = el('button', 'sbtn', 'Přidat jako WMS');
+    add.type = 'button';
+    add.addEventListener('click', () => { if (li.value.trim()) addDataLayer({ name: `WMS ${li.value.trim()}`, note: fd.manual, src: { type: 'wms', url: fd.manual, layers: li.value.trim() } }); });
+    mrow.append(li, add);
+    outBox.appendChild(mrow);
+  }
+  const run = async () => {
+    D.lastUrl = u.value;
+    D.found = { busy: true };
+    renderDataPanel();
+    try {
+      const items = await inspectService(D.lastUrl);
+      D.found = { items, warn: items.warn };
+    } catch (e) {
+      D.found = { error: e.message || String(e), manual: e.manual };
+    }
+    renderDataPanel();
+  };
+  go.addEventListener('click', run);
+  u.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') run(); });
+  root.appendChild(cu);
+  root.appendChild(el('p', 'muted small pad', 'Mapové podklady: © ČÚZK. Na server se posílá jen výřez okolí modelu, model zůstává v zařízení.'));
+}
+/* po načtení modelu: znovu vytvořit vrstvy pro nový výřez */
+function dataOnModelLoaded() {
+  D.infoAt = null; D.infoRes = null; D.groundH = null;
+  updateDataMarker();
+  D.layers.forEach((L) => { disposeLayerObj(L); L.img = null; L.features = null; L.state = 'idle'; });
+  if (dataFrame()) D.layers.filter((L) => L.visible).forEach((L) => loadDataLayer(L));
+  renderDataPanel();
+}
 
 /* reset a napojení na načtení modelu */
 function resetFeatures() {

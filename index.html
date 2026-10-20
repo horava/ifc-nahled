@@ -476,6 +476,28 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
 .cmp-old { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 1px; }
 .cmp-arrow { color: var(--muted); }
 .cmp-new { font-weight: 600; }
+
+/* záložka Data: mapové podklady a služby */
+.dl-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 4px 8px 4px 8px; }
+.dl-name { display: grid; gap: 1px; min-width: 0; }
+.dl-name .lg-sw { display: inline-block; margin-bottom: 2px; }
+.dl-err { color: var(--error); }
+.dl-op { display: block; width: calc(100% - 72px); margin: 0 16px 8px 56px; accent-color: var(--accent); }
+.dl-set { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 0 16px 8px; }
+.dl-lab { display: grid; gap: 4px; min-width: 0; }
+.dl-h { display: flex; gap: 6px; align-items: center; }
+.dl-h .flt-val { width: 100%; min-width: 0; }
+.dl-info-row { padding-bottom: 8px; }
+.dl-cat { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; width: 100%; min-height: 48px; padding: 6px 16px; border: 0; border-top: 1px solid var(--line); background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.dl-cat:hover:not(:disabled) { background: var(--hover); }
+.dl-cat:disabled { cursor: default; }
+.dl-add { font-size: 13px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+.dl-cat.used .dl-add, .dl-cat:disabled .dl-add { color: var(--muted); font-weight: 500; }
+.dl-url { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; padding: 0 16px 6px; }
+.dl-found { display: grid; }
+.dl-pre { margin: 0 16px 8px; padding: 8px; border-radius: 8px; background: var(--ground); font: 12px/1.4 var(--f-mono); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 260px; overflow: auto; }
+.dl { font: 600 11.5px var(--f-body); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; stroke-linejoin: round; }
+.dl-pin { fill: #d03b3b; stroke: var(--panel); stroke-width: 2.5; }
 @media (max-width: 719px) { .fld-grid { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 719px) {
   :root { --panel-w: 100%; }
@@ -655,6 +677,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
         <button class="tab" type="button" role="tab" data-tab="props" aria-selected="false"><span class="tab-iw"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3.5" width="16" height="17" rx="2"/><path d="M8 8.5h8M8 12h8M8 15.5h5"/></svg></span><span class="tab-l">Vlastnosti</span></button>
         <button class="tab" type="button" role="tab" data-tab="bcf" aria-selected="false"><span class="tab-iw"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H10l-6 4.5Z"/><path d="M12 8.2v3.6M12 13.9v.1"/></svg><span class="count" id="bcf-count" hidden></span></span><span class="tab-l">BCF</span></button>
         <button class="tab" type="button" role="tab" data-tab="geo" aria-selected="false"><span class="tab-iw"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.4 2.5 3.5 5.5 3.5 8.5s-1.1 6-3.5 8.5c-2.4-2.5-3.5-5.5-3.5-8.5s1.1-6 3.5-8.5Z"/></svg><span class="flag" id="geo-flag" hidden aria-label="Georeference má upozornění"></span></span><span class="tab-l">Geo</span></button>
+        <button class="tab" type="button" role="tab" data-tab="data" aria-selected="false"><span class="tab-iw"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 21 8l-9 4.5L3 8Z"/><path d="M3 12l9 4.5 9-4.5"/><path d="M3 16l9 4.5 9-4.5"/></svg></span><span class="tab-l">Data</span></button>
         <button class="tab" type="button" role="tab" data-tab="cmp" aria-selected="false" id="tab-cmp" hidden><span class="tab-iw"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3.5v14M3.5 14 7 17.5l3.5-3.5M17 20.5v-14M13.5 10 17 6.5l3.5 3.5"/></svg></span><span class="tab-l">Změny</span></button>
       </div>
       <div class="panel-body" id="panel-model"></div>
@@ -664,6 +687,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
       <div class="panel-body" id="panel-bcf" hidden></div>
       <div class="panel-body" id="panel-geo" hidden></div>
       <div class="panel-body" id="panel-cmp" hidden></div>
+      <div class="panel-body" id="panel-data" hidden></div>
     </aside>
   </div>
   <div class="drop" id="drop" hidden>Pusťte sem IFC nebo BCF soubor</div>

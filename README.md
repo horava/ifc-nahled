@@ -11,7 +11,7 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - výběr ťuknutím dává přednost místnosti před podlahou nebo stěnou, se kterou splývá; další ťuknutí na stejné místo vybere prvek pod ní
 - strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků
 - **hledání** (záložka Hledat) v názvech, číslech místností, typech, materiálech, GlobalId a hodnotách všech sad vlastností, s **filtrem podle vlastnosti** (=, ≠, obsahuje, začíná na, >, <, je/není vyplněno); výsledky jde izolovat, zvýraznit nebo skrýt
-- **barvení podle vlastnosti** (panel Model) s legendou nad modelem; ťuknutím na položku legendy zůstane vidět jen ta skupina; číselné hodnoty a podlaží dostanou postupnou škálu
+- **barvení místností podle vlastnosti** (panel Model): výběr nabízí jen atributy a vlastnosti místností, obarví se místnosti a ostatní prvky zprůhlední; legenda nad modelem vypíše všechny hodnoty bez seskupování, ťuknutím na položku zůstanou vidět jen místnosti s touto hodnotou; čísla a podlaží dostanou postupnou škálu
 - **porovnání dvou verzí modelu** (Model → Porovnat se starší verzí…): přidané, změněné (geometrie, vlastnosti, atributy) a odebrané prvky podle GlobalId, odebrané jako červení „duchové“, u změněného prvku tabulka před → po, export změn do CSV
 - **export místností do Excelu** (.xlsx; panel Model, nebo jen místnosti podlaží či budovy z jejich vlastností): podlaží, číslo, název, plocha (z Qto nebo z geometrie), výška, objem, souřadnice těžiště a výška podlahy v mapovém systému, GlobalId a všechny vlastnosti místností; listy se souhrnem podle podlaží a podle účelu
 - **popisky místností v půdorysu** (číslo, název, plocha z Qto_SpaceBaseQuantities nebo z geometrie) a uložení půdorysu jako obrázek PNG s měřítkem, severkou a legendou
@@ -19,6 +19,7 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - vodorovný, příčný a podélný řez, půdorys podlaží; svislé řezy se samy zarovnají na natočení budovy a jdou ručně natáčet nebo zarovnat kolmo na vybraný prvek
 - měření vzdáleností s přichytáváním k rohům
 - georeference podle IfcMapConversion (IFC4/4.3) nebo ePSet_MapConversion (IFC2x3): mapové souřadnice bodů a prvků, kontroly georeference, sever mapy v půdorysu, export bodů do CSV
+- **mapové podklady a data** (záložka Data, jen u georeferencovaného modelu): nabídka veřejných služeb ČÚZK (ortofoto, katastrální mapa, ZTM, ZABAGED, vrstevnice, RÚIAN parcely, stavební objekty a adresní místa) nebo vlastní adresa veřejné služby WMS či ArcGIS Server (MapServer, FeatureServer, ImageServer); podklad se položí pod model ve 3D i v půdorysu, vektory mají popisky (čísla parcel); „Info o místě“ ukáže atributy po ťuknutí do modelu nebo půdorysu. Služba musí povolovat CORS. Na server se posílá jen výřez okolí modelu.
 - BCF 2.1: záznamy k prvkům (pohled, řez, vybraný prvek, snímek), komentáře, export a import `.bcfzip`
 - práci offline po prvním otevření
 
