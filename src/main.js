@@ -153,6 +153,7 @@ new ResizeObserver(resize).observe(viewport);
 
 function renderFrame() {
   renderer.clear();
+  if (typeof setSpaceSide === 'function') setSpaceSide(S.clipOn);
   renderer.clippingPlanes = S.clipOn ? [clipPlane] : [];
   renderer.render(scene, camera);
   renderer.clippingPlanes = [];
@@ -1720,6 +1721,7 @@ function renderPlanImage(f) {
   const prevBg = scene.background;
   scene.background = new THREE.Color(cssVar('--panel') || '#f8faf9');
   renderer.setRenderTarget(plan.rt);
+  if (typeof setSpaceSide === 'function') setSpaceSide(true);
   renderer.clippingPlanes = [planCutPlane];
   renderer.clear();
   renderer.render(scene, oc);
@@ -3843,13 +3845,27 @@ function colorMat(color, space, ghost) {
     } else {
       m = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide });
       // místnosti neprůhledné (průhlednost tisíců objektů je na iPadu drahá), jen mírně dopředu kvůli podlaze
-      if (space) Object.assign(m, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
+      if (space) Object.assign(m, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4, side: spaceSideBack ? THREE.BackSide : THREE.DoubleSide });
     }
     colorMatCache.set(key, m);
   }
   return m;
 }
 function ghostColor() { return cssVar('--muted') || '#8a9490'; }
+/* obarvené místnosti v řezu: kreslí se jen vnitřní strana. Podlaha místnosti tak nebliká se stropem
+   místnosti pod ní a sousední místnosti se neperou o společnou stěnu (plochy leží přesně na sobě). */
+var spaceSideBack = false; // var: renderFrame běží už před touto řádkou
+function setSpaceSide(back) {
+  if (!!back === !!spaceSideBack) return;
+  spaceSideBack = back;
+  const side = back ? THREE.BackSide : THREE.DoubleSide;
+  for (const [key, m] of colorMatCache) {
+    if (!key.endsWith('|1|0')) continue;
+    m.side = side; m.needsUpdate = true;
+    const t = selTintCache.get(m);
+    if (t) { t.side = side; t.needsUpdate = true; }
+  }
+}
 
 function setColoring(state) {
   S.color = state;
@@ -4279,6 +4295,7 @@ async function exportPlanPng() {
   scene.background = new THREE.Color(cssVar('--panel') || '#f8faf9');
   planCutPlane.constant = f.cut;
   renderer.setRenderTarget(rt);
+  if (typeof setSpaceSide === 'function') setSpaceSide(true);
   renderer.clippingPlanes = [planCutPlane];
   renderer.clear();
   renderer.render(scene, plan.cam);
