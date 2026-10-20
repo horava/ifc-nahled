@@ -416,11 +416,17 @@ function isVisible(id, rec) {
   if (st && !st.visible) return false;
   return true;
 }
-function applyVisibility() {
+/* viditelnost meshů; zprůhledněné prvky (duchové) se nekreslí jednotlivě, ale jako jeden sloučený objekt */
+function syncMeshVisibility() {
+  const merge = !!S.color;
   for (const [id, rec] of S.elements) {
     const v = isVisible(id, rec);
-    for (const m of rec.meshes) m.visible = v;
+    for (const m of rec.meshes) m.visible = v && !(merge && m.userData.ghost && id !== S.selected);
   }
+  if (typeof rebuildGhosts === 'function') rebuildGhosts();
+}
+function applyVisibility() {
+  syncMeshVisibility();
   updateToolbar();
   requestRender();
   if (S.tree && !$('#panel-tree').hidden) renderTree();
@@ -434,7 +440,9 @@ function select(id, opts = {}) {
   const rec = S.elements.get(id);
   if (!rec) return;
   S.selected = id;
+  const showSel = isVisible(id, rec);
   for (const m of rec.meshes) {
+    if (m.userData.ghost && S.color) m.visible = showSel;
     m.userData.mat = m.material;
     m.material = selTinted(m.material);
     // obrys z hran prvku (tlustá čára v pixelech, nezávislá na zoomu)
@@ -461,6 +469,7 @@ function deselect(render = true) {
     const rec = S.elements.get(S.selected);
     if (rec) for (const m of rec.meshes) {
       if (m.userData.mat) m.material = m.userData.mat;
+      if (m.userData.ghost && S.color) m.visible = false;
       for (const c of [...m.children]) if (c.userData.selOutline) { m.remove(c); c.geometry.dispose(); }
     }
   }
@@ -1061,6 +1070,7 @@ $('#btn-orbit').setAttribute('aria-pressed', String(S.orbitSel));
 $('#btn-edges').addEventListener('click', () => {
   S.edges = !S.edges;
   modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges; });
+  ghostGroup.children.forEach((o) => { if (o.userData.ghostEdges) o.visible = S.edges; });
   updateToolbar(); requestRender();
 });
 $('#btn-hide').addEventListener('click', () => {
@@ -3832,7 +3842,8 @@ function colorMat(color, space, ghost) {
       m = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide, transparent: true, opacity: space ? 0.04 : 0.09, depthWrite: false });
     } else {
       m = new THREE.MeshLambertMaterial({ color: new THREE.Color(color), side: THREE.DoubleSide });
-      if (space) Object.assign(m, { transparent: true, opacity: 0.68, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
+      // místnosti neprůhledné (průhlednost tisíců objektů je na iPadu drahá), jen mírně dopředu kvůli podlaze
+      if (space) Object.assign(m, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 });
     }
     colorMatCache.set(key, m);
   }
@@ -3872,9 +3883,87 @@ function paintModel() {
       for (const c of m.children) if (c.userData.edge) c.material = ghost ? ghostEdgeMat : edgeMat;
     }
   }
+  syncMeshVisibility();
   if (keep != null && S.elements.has(keep)) select(keep, { keepPanel: true });
   requestRender();
   markPlanDirty();
+}
+/* sloučení duchů do jednoho meshe (a jedněch hran): tisíce průhledných objektů se jinak
+   musí každý snímek řadit a kreslit zvlášť, což na iPadu prohlížení výrazně zpomalí */
+const ghostGroup = new THREE.Group();
+scene.add(ghostGroup);
+const ghostMergeMat = new THREE.MeshLambertMaterial({ transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide });
+function rebuildGhosts() {
+  ghostGroup.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  ghostGroup.clear();
+  if (!S.color) return;
+  const list = [];
+  let nv = 0, ni = 0, ne = 0;
+  for (const [id, rec] of S.elements) {
+    if (!rec.meshes[0]?.userData.ghost || !isVisible(id, rec)) continue;
+    for (const m of rec.meshes) {
+      const pos = m.geometry.attributes.position, ix = m.geometry.index;
+      if (!pos || !ix) continue;
+      list.push(m);
+      nv += pos.count; ni += ix.count;
+      const e = m.children.find((c) => c.userData.edge);
+      if (e) ne += e.geometry.attributes.position.count;
+    }
+  }
+  if (!list.length) return;
+  const P = new Float32Array(nv * 3), Nn = new Float32Array(nv * 3), I = new Uint32Array(ni), E = ne ? new Float32Array(ne * 3) : null;
+  let vo = 0, io = 0, eo = 0;
+  const nm = new THREE.Matrix3();
+  for (const m of list) {
+    m.updateMatrixWorld();
+    const w = m.matrixWorld.elements;
+    nm.getNormalMatrix(m.matrixWorld);
+    const n9 = nm.elements;
+    const pos = m.geometry.attributes.position, nor = m.geometry.attributes.normal;
+    const arr = pos.data ? pos.data.array : pos.array, st = pos.data ? pos.data.stride : 3, po = pos.offset || 0;
+    const narr = nor ? (nor.data ? nor.data.array : nor.array) : null, nst = nor ? (nor.data ? nor.data.stride : 3) : 3, no = nor?.offset || 0;
+    for (let i = 0; i < pos.count; i++) {
+      const a = i * st + po, x = arr[a], y = arr[a + 1], z = arr[a + 2], k = (vo + i) * 3;
+      P[k] = w[0] * x + w[4] * y + w[8] * z + w[12];
+      P[k + 1] = w[1] * x + w[5] * y + w[9] * z + w[13];
+      P[k + 2] = w[2] * x + w[6] * y + w[10] * z + w[14];
+      if (narr) {
+        const b = i * nst + no, nx = narr[b], ny = narr[b + 1], nz = narr[b + 2];
+        Nn[k] = n9[0] * nx + n9[3] * ny + n9[6] * nz; Nn[k + 1] = n9[1] * nx + n9[4] * ny + n9[7] * nz; Nn[k + 2] = n9[2] * nx + n9[5] * ny + n9[8] * nz;
+      }
+    }
+    const ia = m.geometry.index.array;
+    for (let i = 0; i < ia.length; i++) I[io + i] = ia[i] + vo;
+    io += ia.length; vo += pos.count;
+    const e = E && m.children.find((c) => c.userData.edge);
+    if (e) {
+      const ea = e.geometry.attributes.position.array;
+      for (let i = 0; i < ea.length; i += 3) {
+        const x = ea[i], y = ea[i + 1], z = ea[i + 2];
+        E[eo++] = w[0] * x + w[4] * y + w[8] * z + w[12];
+        E[eo++] = w[1] * x + w[5] * y + w[9] * z + w[13];
+        E[eo++] = w[2] * x + w[6] * y + w[10] * z + w[14];
+      }
+    }
+  }
+  ghostMergeMat.color.set(ghostColor());
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(Nn, 3));
+  g.setIndex(new THREE.BufferAttribute(I, 1));
+  g.computeBoundingSphere();
+  const mesh = new THREE.Mesh(g, ghostMergeMat);
+  mesh.renderOrder = 1;
+  ghostGroup.add(mesh);
+  if (E) {
+    const eg = new THREE.BufferGeometry();
+    eg.setAttribute('position', new THREE.BufferAttribute(E, 3));
+    eg.computeBoundingSphere();
+    const ls = new THREE.LineSegments(eg, ghostEdgeMat);
+    ls.visible = S.edges;
+    ls.userData.ghostEdges = true;
+    ghostGroup.add(ls);
+  }
 }
 function refreshColoring() {
   if (!S.color) return;
@@ -5931,6 +6020,7 @@ function dataOnModelLoaded() {
 function resetFeatures() {
   exitCompare(true);
   S.color = null; S.idx = null; S.idxPromise = null; S.idxFor = null;
+  rebuildGhosts();
   S.spaceGeo = null; S.roomLbl = null; S.legendCollapsed = false;
   if (S.search) { S.search.results = []; S.search.active = false; }
   colorMatCache.forEach((m) => m.dispose()); colorMatCache.clear();
@@ -5962,4 +6052,4 @@ if (matchMedia('(max-width: 719px)').matches) app.classList.remove('sheet-open')
   }
 })();
 window.__ifc = S;
-window.__ifcView = { camera, dataGroup, renderer };
+window.__ifcView = { camera, dataGroup, renderer, renderFrame, scene };
