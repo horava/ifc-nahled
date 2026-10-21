@@ -2,7 +2,7 @@
 <html lang="cs">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>IFC prohlížečka</title>
 <meta name="description" content="Offline prohlížeč IFC modelů pro iPad. Modely se zpracují přímo v zařízení.">
 <meta name="theme-color" content="#DCE1DE" media="(prefers-color-scheme: light)">
@@ -62,7 +62,7 @@ body { margin: 0; }
   --glass: rgba(31, 38, 36, 0.86); --error: #FF8B7E; --ok: #6CC58C; --warn: #E8B04A; --info: #8FB8E0; --space: #6FAEEA; color-scheme: dark;
 }
 
-html, body { height: 100%; }
+html, body { height: 100%; touch-action: manipulation; } /* bez zvětšení stránky dvojitým ťuknutím */
 body {
   background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 15px; line-height: 1.45;
   overflow: hidden; -webkit-text-size-adjust: 100%; -webkit-tap-highlight-color: transparent;

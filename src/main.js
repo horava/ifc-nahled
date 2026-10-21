@@ -958,6 +958,19 @@ const endPointer = (e) => {
   pick(e.clientX, e.clientY);
 };
 renderer.domElement.addEventListener('pointerup', endPointer);
+/* Safari na iPadu při dvojitém ťuknutí zvětšuje celou stránku (i přes touch-action);
+   druhé rychlé ťuknutí do 3D nebo půdorysu proto stránce nepředáme. Výběr a cílení běží
+   přes pointer události, kterých se to netýká. */
+{
+  let lastTouchEnd = 0;
+  const noDoubleTapZoom = (e) => {
+    const now = performance.now();
+    if (now - lastTouchEnd < 400 && e.changedTouches?.length === 1) e.preventDefault();
+    lastTouchEnd = now;
+  };
+  renderer.domElement.addEventListener('touchend', noDoubleTapZoom, { passive: false });
+  document.getElementById('plan-view')?.addEventListener('touchend', noDoubleTapZoom, { passive: false });
+}
 renderer.domElement.addEventListener('pointercancel', endPointer);
 
 function hitAt(cx, cy) {
