@@ -26,6 +26,7 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - **průvodce při prvním spuštění** (7 kroků, jde přeskočit a spustit znovu) a **návod** pod otazníkem v horní liště: kapitoly podle funkcí, O aplikaci (verze, soukromí) a licence
 - světlý a tmavý režim: výchozí podle nastavení zařízení, tlačítkem v horní liště jde přepnout a volba se pamatuje
 - **velké modely**: soubor se čte po částech a po zpracování se uvolní z paměti, průběh načítání v procentech; modely s tisíci prvků se kreslí sloučeně po podlažích a materiálech (desítky kreslení místo desítek tisíc), opakované tvary jako instance; soubory nad 60 MB bez normál (stínování po ploškách); přichytávání při měření předvybírá prvky u kurzoru
+- **ostré mapové podklady**: po přiblížení se pro viditelnou oblast dočte výřez mapy v rozlišení displeje (u WMS s parametry DPI pro GeoServer, MapServer a QGIS, u ArcGIS dpi), ve 3D i v půdorysu; volba „Popisky WMS map: Ostré / Větší písmo“
 - **citace zdrojů dat**: u mapových podkladů vpravo dole ve 3D, v záložce Data a v PNG půdorysu (ČÚZK ve tvaru „ČÚZK, rok“, DMVS, statutární město Brno, u vlastních služeb údaj z popisu služby)
 - práci offline po prvním otevření
 

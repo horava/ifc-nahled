@@ -200,7 +200,7 @@ function renderFrame() {
   renderer.render(measureScene, camera);
   updateOverlay();
   placeGeoOverlay();
-  if (typeof updateDataAttr === 'function') updateDataAttr();
+  try { updateDataAttr(); watchDetailView(); } catch (e) { /* data ještě nejsou připravená */ }
   updateCompass();
   if (plan.on) updatePlanMarker();
   needsRender = false;
@@ -2463,6 +2463,7 @@ function renderPlanImage(f) {
   renderer.clear();
   bigSync();
   renderer.render(scene, oc);
+  if (typeof watchDetailPlan === 'function') watchDetailPlan();
   renderer.setRenderTarget(null);
   renderer.clippingPlanes = [];
   scene.background = prevBg;
@@ -5951,12 +5952,16 @@ function imageUrl(src, F, X) {
     const sep = src.url.includes('?') ? '&' : '?';
     const v13 = String(src.version || '1.1.1').startsWith('1.3');
     // projektované systémy (5514, UTM, 3857) mají ve WMS 1.3.0 pořadí os E, N jako 1.1.1
-    return `${src.url}${sep}${qs({ SERVICE: 'WMS', VERSION: v13 ? '1.3.0' : '1.1.1', REQUEST: 'GetMap', LAYERS: src.layers || '', STYLES: '', [v13 ? 'CRS' : 'SRS']: `EPSG:${F.sr}`, BBOX: bbox, WIDTH: X.W, HEIGHT: X.H, FORMAT: src.format || 'image/png', TRANSPARENT: 'TRUE' })}`;
+    const q = { SERVICE: 'WMS', VERSION: v13 ? '1.3.0' : '1.1.1', REQUEST: 'GetMap', LAYERS: src.layers || '', STYLES: '', [v13 ? 'CRS' : 'SRS']: `EPSG:${F.sr}`, BBOX: bbox, WIDTH: X.W, HEIGHT: X.H, FORMAT: src.format || 'image/png', TRANSPARENT: 'TRUE' };
+    // jemnější obrázek pro displej s vyšší hustotou: rozšiřující parametry běžných serverů
+    // (GeoServer FORMAT_OPTIONS, MapServer MAP_RESOLUTION, QGIS DPI); ostatní je ignorují
+    if (X.dpi && X.dpi !== 96) Object.assign(q, { DPI: X.dpi, MAP_RESOLUTION: X.dpi, FORMAT_OPTIONS: `dpi:${X.dpi}` });
+    return `${src.url}${sep}${qs(q)}`;
   }
   if (src.type === 'agsimg') {
     return `${src.url}/exportImage?${qs({ bbox, bboxSR: F.sr, imageSR: F.sr, size: `${X.W},${X.H}`, format: 'jpgpng', f: 'image' })}`;
   }
-  const p = { bbox, bboxSR: F.sr, imageSR: F.sr, size: `${X.W},${X.H}`, format: src.format || 'png32', transparent: src.transparent ? 'true' : 'false', dpi: 96, f: 'image' };
+  const p = { bbox, bboxSR: F.sr, imageSR: F.sr, size: `${X.W},${X.H}`, format: src.format || 'png32', transparent: src.transparent ? 'true' : 'false', dpi: X.dpi || 96, f: 'image' };
   if (src.layers) p.layers = `show:${src.layers}`;
   return `${src.url}/export?${qs(p)}`;
 }
@@ -6079,12 +6084,22 @@ function demHeight(dem, E, N) {
   return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
 }
 /* síť terénu ve scéně; uvExt = výřez obrázku, který se na terén natáhne */
-function demGeometry(dem, F, lift, uvExt) {
-  const { X, W, H, z } = dem;
+function demGeometry(dem, F, lift, uvExt, clip) {
+  const { X, W: W0, z } = dem;
+  // volitelný ořez na menší výřez (ostrý detail mapy): jen buňky mřížky, které do něj zasahují
+  let i0 = 0, j0 = 0, i1 = dem.W - 1, j1 = dem.H - 1;
+  if (clip) {
+    const fx = (E) => (E - X.e0) / (X.e1 - X.e0) * dem.W - 0.5, fy = (N) => (X.n1 - N) / (X.n1 - X.n0) * dem.H - 0.5;
+    i0 = Math.max(0, Math.floor(fx(clip.e0))); i1 = Math.min(dem.W - 1, Math.ceil(fx(clip.e1)));
+    j0 = Math.max(0, Math.floor(fy(clip.n1))); j1 = Math.min(dem.H - 1, Math.ceil(fy(clip.n0)));
+  }
+  const W = i1 - i0 + 1, H = j1 - j0 + 1;
   const pos = new Float32Array(W * H * 3), uv = uvExt ? new Float32Array(W * H * 2) : null;
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
-    const E = X.e0 + (i + 0.5) / W * (X.e1 - X.e0), N = X.n1 - (j + 0.5) / H * (X.n1 - X.n0);
-    const s = dataScene(F, E, N, z[j * W + i], lift);
+    const gi = i + i0, gj = j + j0;
+    let E = X.e0 + (gi + 0.5) / W0 * (X.e1 - X.e0), N = X.n1 - (gj + 0.5) / dem.H * (X.n1 - X.n0);
+    if (clip) { E = Math.min(Math.max(E, clip.e0), clip.e1); N = Math.min(Math.max(N, clip.n0), clip.n1); }
+    const s = dataScene(F, E, N, z[gj * W0 + gi], lift);
     const k = j * W + i;
     pos[k * 3] = s.x; pos[k * 3 + 1] = s.y; pos[k * 3 + 2] = s.z;
     if (uv) { uv[k * 2] = (E - uvExt.e0) / (uvExt.e1 - uvExt.e0); uv[k * 2 + 1] = (N - uvExt.n0) / (uvExt.n1 - uvExt.n0); }
@@ -6363,6 +6378,154 @@ async function i3sAttributes(L, n, k) {
 }
 
 /* sestavení 3D objektů vrstvy (obrázek = deska nebo potah terénu, vektory = čáry a výplně) */
+/* obrázek mapy položený pod model nebo na terén; detail = ostrý výřez nad základním obrázkem */
+function imageLayerMesh(L, F, img, X, detail) {
+  const idx = D.layers.indexOf(L);
+  const dem = activeDem();
+  const H = dataGroundH(F);
+  const lift = -0.06 + idx * 0.004 + (detail ? 0.002 : 0);
+  const tex = new THREE.Texture(img);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.needsUpdate = true;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: L.opacity ?? 1, depthWrite: false, side: THREE.DoubleSide });
+  if (!detail) {
+    // „díra“ v základním obrázku pod ostrým detailem: u průhledných map (katastr, DTM) by jinak
+    // rozmazané čáry základního obrázku prosvítaly pod ostrými
+    const hole = { value: new THREE.Vector4(0, 0, 0, 0) };
+    mat.userData.hole = hole;
+    mat.onBeforeCompile = (sh) => {
+      sh.uniforms.uHole = hole;
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nuniform vec4 uHole;')
+        .replace('#include <map_fragment>', '#include <map_fragment>\n  if (vMapUv.x > uHole.x && vMapUv.x < uHole.z && vMapUv.y > uHole.y && vMapUv.y < uHole.w) discard;');
+    };
+    mat.customProgramCacheKey = () => 'map-hole';
+    L.baseMat = mat;
+  }
+  let geo;
+  if (dem) {
+    // potah terénu: stejná síť, posunutá nad terén, aby se s ním nepřekrývala
+    geo = demGeometry(dem, F, 0.03 + idx * 0.01 + (detail ? 0.005 : 0), X, detail ? X : null);
+    Object.assign(mat, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 - idx - (detail ? 1 : 0) });
+  } else {
+    const c = [[X.e0, X.n0], [X.e1, X.n0], [X.e1, X.n1], [X.e0, X.n1]].map(([E, N]) => dataScene(F, E, N, H, lift));
+    geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([c[0], c[1], c[2], c[0], c[2], c[3]].flatMap((p) => [p.x, p.y, p.z]), 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2));
+    geo.computeVertexNormals();
+  }
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.renderOrder = -20 + idx + (detail ? 0.5 : 0);
+  if (detail) mesh.userData.detail = true;
+  return mesh;
+}
+
+/* ---------- ostrý detail mapových podkladů ----------
+   Základní obrázek vrstvy pokrývá celé okolí (2048 px), takže po přiblížení je rozmazaný a popisky
+   nečitelné. Když se pohled na chvíli zastaví, dočte se pro právě viditelnou oblast druhý obrázek
+   v rozlišení displeje a položí se nad základní – podobně jako dlaždice webových map. */
+const DETAIL_TYPES = new Set(['wms', 'agsmap', 'agsimg']);
+const DETAIL_MAX = 2048;
+let detailTimer = 0, detailFrom = '3d', lastCamKey = '', lastPlanKey = '';
+try { D.sharp = localStorage.getItem('ifc-nahled-data-sharp') !== '0'; } catch (e) { D.sharp = true; }
+function scheduleDetail(from) {
+  if (from) detailFrom = from;
+  clearTimeout(detailTimer);
+  detailTimer = setTimeout(updateDetails, 450);
+}
+function watchDetailView() {
+  if (!D.layers.length) return;
+  const e = camera.matrixWorld.elements;
+  const k = [e[12], e[13], e[14], e[8], e[9], e[10]].map((v) => v.toFixed(3)).join(',') + camera.fov;
+  if (k !== lastCamKey) { lastCamKey = k; scheduleDetail('3d'); }
+}
+function watchDetailPlan() {
+  if (!D.layers.length || !plan.view) return;
+  const { w, h } = planSize();
+  const k = `${plan.view.cx.toFixed(2)},${plan.view.cz.toFixed(2)},${plan.view.ppm.toFixed(4)},${w},${h}`;
+  if (k !== lastPlanKey) { lastPlanKey = k; scheduleDetail('plan'); }
+}
+const _dRay = new THREE.Raycaster(), _dPlane = new THREE.Plane(), _dV = new THREE.Vector3(), _dN = new THREE.Vector2();
+/* viditelná oblast v souřadnicích požadavku a potřebné rozlišení (m na CSS pixel) */
+function detailView(F, base) {
+  const toReq = (p) => { const l = toIfcPoint(p); return F.toReq(l.x, l.y); };
+  const pts = [];
+  let mpp;
+  if (detailFrom === 'plan' && plan.on && plan.view) {
+    const { w, h } = planSize();
+    const A = planAxes(), hw = w / 2 / plan.view.ppm, hh = h / 2 / plan.view.ppm;
+    for (const a of [-hw, hw]) for (const b of [-hh, hh]) pts.push(toReq(new THREE.Vector3(plan.view.cx + a * A.rx + b * A.ux, 0, plan.view.cz + a * A.rz + b * A.uz)));
+    mpp = 1 / plan.view.ppm;
+  } else {
+    const H = dataGroundH(F);
+    const g = dataScene(F, (base.e0 + base.e1) / 2, (base.n0 + base.n1) / 2, H, 0);
+    _dPlane.set(new THREE.Vector3(0, 1, 0), -g.y);
+    const vh = renderer.domElement.clientHeight || 1;
+    _dN.set(0, 0); _dRay.setFromCamera(_dN, camera);
+    const c = _dRay.ray.intersectPlane(_dPlane, _dV);
+    if (!c) return null;
+    const dc = c.distanceTo(camera.position);
+    mpp = dc * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / vh;
+    for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) {
+      _dN.set(-1 + i / 2, -1 + j / 2); _dRay.setFromCamera(_dN, camera);
+      const p = _dRay.ray.intersectPlane(_dPlane, _dV);
+      if (p && p.distanceTo(camera.position) < dc * 2.5) pts.push(toReq(p));
+    }
+    if (pts.length < 3) return null;
+  }
+  let e0 = Infinity, n0 = Infinity, e1 = -Infinity, n1 = -Infinity;
+  for (const [E, N] of pts) { e0 = Math.min(e0, E); n0 = Math.min(n0, N); e1 = Math.max(e1, E); n1 = Math.max(n1, N); }
+  // jen uvnitř načteného okolí
+  e0 = Math.max(e0, base.e0); n0 = Math.max(n0, base.n0); e1 = Math.min(e1, base.e1); n1 = Math.min(n1, base.n1);
+  if (!(e1 - e0 > 1 && n1 - n0 > 1)) return null;
+  return { e0, n0, e1, n1, mpp };
+}
+function updateDetails() {
+  const F = dataFrame();
+  if (!F) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  for (const L of D.layers) {
+    if (!DETAIL_TYPES.has(L.src.type) || L.state !== 'ok' || !L.img || !L.obj || !L.visible) continue;
+    const base = L.ext;
+    const v = detailView(F, base);
+    // hustota: ArcGIS umí dpi vždy; u WMS „ostré“ = podle displeje, „větší písmo“ = 1 obrazový bod na CSS pixel
+    const s = L.src.type === 'wms' && !D.sharp ? 1 : dpr;
+    const need = v ? v.mpp / s : Infinity;
+    const baseMpp = (base.e1 - base.e0) / base.W;
+    if (!v || baseMpp <= need * 1.4) { dropDetail(L); continue; }
+    let W = (v.e1 - v.e0) / need, Hh = (v.n1 - v.n0) / need;
+    const k = Math.min(1, DETAIL_MAX / Math.max(W, Hh));
+    W = Math.max(64, Math.round(W * k)); Hh = Math.max(64, Math.round(Hh * k));
+    const X = { e0: v.e0, n0: v.n0, e1: v.e1, n1: v.n1, W, H: Hh, dpi: Math.round(96 * s) };
+    const key = [X.e0, X.n0, X.e1, X.n1].map((x) => x.toFixed(1)).join(',') + `|${W}x${Hh}|${X.dpi}`;
+    if (L.detail?.key === key || L.detailPending === key) continue;
+    L.detailPending = key;
+    const tok = (L.detailTok = (L.detailTok || 0) + 1);
+    loadImage(imageUrl(L.src, F, X)).then((img) => {
+      if (tok !== L.detailTok || !L.obj || L.state !== 'ok') return;
+      dropDetail(L);
+      const mesh = imageLayerMesh(L, F, img, X, true);
+      L.obj.add(mesh);
+      L.detail = { key, mesh };
+      if (L.baseMat?.userData.hole) {
+        const b = L.ext, du = 1.5 / b.W, dv = 1.5 / b.H;
+        L.baseMat.userData.hole.value.set((X.e0 - b.e0) / (b.e1 - b.e0) + du, (X.n0 - b.n0) / (b.n1 - b.n0) + dv, (X.e1 - b.e0) / (b.e1 - b.e0) - du, (X.n1 - b.n0) / (b.n1 - b.n0) - dv);
+      }
+      requestRender(); markPlanDirty(0);
+    }).catch(() => { /* detail je jen vylepšení, základní obrázek zůstává */ }).finally(() => { if (tok === L.detailTok) L.detailPending = null; });
+  }
+}
+function dropDetail(L) {
+  if (!L.detail) return;
+  const m = L.detail.mesh;
+  m.parent?.remove(m);
+  m.geometry.dispose(); m.material.map?.dispose(); m.material.dispose();
+  L.detail = null;
+  L.baseMat?.userData.hole?.value.set(0, 0, 0, 0);
+  requestRender(); markPlanDirty(0);
+}
 function buildDataLayer(L) {
   disposeLayerObj(L);
   const F = dataFrame();
@@ -6382,27 +6545,9 @@ function buildDataLayer(L) {
   } else if (L.i3s) {
     grp.add(buildI3S(L, F));
   } else if (L.img) {
-    const X = L.ext;
-    const tex = new THREE.Texture(L.img);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.anisotropy = 4;
-    tex.needsUpdate = true;
-    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: L.opacity ?? 1, depthWrite: false, side: THREE.DoubleSide });
-    let geo;
-    if (dem) {
-      // potah terénu: stejná síť, posunutá nad terén, aby se s ním nepřekrývala
-      geo = demGeometry(dem, F, 0.03 + idx * 0.01, X);
-      Object.assign(mat, { polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 - idx });
-    } else {
-      const c = [[X.e0, X.n0], [X.e1, X.n0], [X.e1, X.n1], [X.e0, X.n1]].map(([E, N]) => dataScene(F, E, N, H, lift));
-      geo = new THREE.BufferGeometry();
-      geo.setAttribute('position', new THREE.Float32BufferAttribute([c[0], c[1], c[2], c[0], c[2], c[3]].flatMap((p) => [p.x, p.y, p.z]), 3));
-      geo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1], 2));
-      geo.computeVertexNormals();
-    }
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.renderOrder = -20 + idx;
-    grp.add(mesh);
+    grp.add(imageLayerMesh(L, F, L.img, L.ext, false));
+    L.detail = null;
+    scheduleDetail();
   } else if (L.features) {
     const col = new THREE.Color(L.src.color || '#2a78d6');
     const segs = [], tris = [], pts = [];
@@ -6904,6 +7049,18 @@ function renderDataPanel() {
   const hWrap = el('div', 'dl-h'); hWrap.append(hIn, hReset);
   if (activeDem()) { hIn.disabled = true; hReset.disabled = true; hIn.title = 'Mapy a vektory leží na terénu'; }
   grid.append(lab('Okolí modelu', mSel), lab(activeDem() ? 'Výška podkladu: podle terénu' : `Výška podkladu ${S.geo?.jtsk ? '(Bpv)' : '(H)'}`, hWrap));
+  // WMS: ostré podle displeje (popisky můžou být u některých serverů drobné), nebo větší písmo
+  const shSel = el('select', 'color-key');
+  [['1', 'Ostré'], ['0', 'Větší písmo']].forEach(([v, t]) => { const o = el('option', null, t); o.value = v; shSel.appendChild(o); });
+  shSel.value = D.sharp ? '1' : '0';
+  shSel.title = 'Když jsou popisky WMS map (katastr, technická mapa) moc drobné, zvolte Větší písmo.';
+  shSel.addEventListener('change', () => {
+    D.sharp = shSel.value === '1';
+    try { localStorage.setItem('ifc-nahled-data-sharp', D.sharp ? '1' : '0'); } catch (e) { /* ignore */ }
+    D.layers.forEach((L) => { L.detailTok = (L.detailTok || 0) + 1; L.detailPending = null; dropDetail(L); });
+    scheduleDetail();
+  });
+  grid.append(lab('Popisky WMS map', shSel));
   set.appendChild(grid);
   const infoB = el('button', 'sbtn' + (D.info ? ' primary' : ''), D.info ? 'Info o místě: zapnuto' : 'Info o místě');
   infoB.type = 'button';
