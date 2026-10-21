@@ -855,15 +855,30 @@ let lastTap = null;
 let pinchPrev = null;
 const pointers = new Map();
 let orbit = null;
-try { S.orbitSel = localStorage.getItem('ifc-nahled-orbit-sel') !== '0'; } catch (e) { S.orbitSel = true; }
+// střed otáčení: 'point' = bod modelu pod prstem/kurzorem na začátku tažení, 'sel' = vybraný prvek, 'center' = střed pohledu
+const ORBIT_MODES = ['point', 'sel', 'center'];
+try { S.orbitMode = localStorage.getItem('ifc-nahled-orbit-mode'); } catch (e) { /* ignore */ }
+if (!ORBIT_MODES.includes(S.orbitMode)) S.orbitMode = 'point';
 
 /* ----- otáčení kolem středu: výběr / cíl kamery ----- */
 const pivotEl = $('#pivot');
 let pivotHideT = 0;
-function currentPivot() {
-  if (S.orbitSel && S.selected != null) {
+const _pivPlane = new THREE.Plane();
+function currentPivot(sx, sy) {
+  if (S.orbitMode === 'sel' && S.selected != null) {
     const rec = S.elements.get(S.selected);
     if (rec && rec.meshes.length) return boxOf(rec.meshes).getCenter(new THREE.Vector3());
+  }
+  if (S.orbitMode !== 'center' && sx != null) {
+    // bod modelu pod prstem; mimo model rovina pod modelem (terén, mapa), jinak střed pohledu
+    const hit = hitAt(sx, sy);
+    if (hit) return hit.point.clone();
+    if (!S.bbox.isEmpty()) {
+      _pivPlane.set(new THREE.Vector3(0, 1, 0), -S.bbox.min.y);
+      const p = ray.ray.intersectPlane(_pivPlane, new THREE.Vector3());
+      const lim = S.bbox.getSize(new THREE.Vector3()).length() * 20 + 100;
+      if (p && p.distanceTo(camera.position) < lim) return p;
+    }
   }
   return controls.target.clone();
 }
@@ -904,11 +919,24 @@ function orbitBy(dx, dy, P) {
   controls.update();
   requestRender();
 }
-function setOrbitSel(on) {
-  S.orbitSel = on;
-  try { localStorage.setItem('ifc-nahled-orbit-sel', on ? '1' : '0'); } catch (e) { /* ignore */ }
-  $('#btn-orbit').setAttribute('aria-pressed', String(on));
-  toast(on ? 'Otáčení kolem vybraného prvku je zapnuté.' : 'Otáčí se kolem středu pohledu.');
+const finePointer = () => { try { return matchMedia('(hover: hover) and (pointer: fine)').matches; } catch (e) { return false; } };
+function orbitUi() {
+  const b = $('#btn-orbit');
+  const m = S.orbitMode;
+  const label = m === 'point' ? (finePointer() ? 'Pod kurzorem' : 'Pod prstem') : m === 'sel' ? 'Kolem prvku' : 'Kolem středu';
+  b.querySelector('span').textContent = label;
+  b.setAttribute('aria-pressed', String(m !== 'center'));
+  b.dataset.mode = m;
+  b.title = m === 'point' ? 'Otáčí se kolem bodu modelu, kde začneš táhnout (ťuknutím přepneš)'
+    : m === 'sel' ? 'Otáčí se kolem vybraného prvku, bez výběru kolem bodu pod prstem (ťuknutím přepneš)'
+      : 'Otáčí se kolem středu pohledu (ťuknutím přepneš)';
+}
+function setOrbitMode(m) {
+  S.orbitMode = m;
+  try { localStorage.setItem('ifc-nahled-orbit-mode', m); } catch (e) { /* ignore */ }
+  orbitUi();
+  toast(m === 'point' ? `Otáčí se kolem bodu ${finePointer() ? 'pod kurzorem' : 'pod prstem'}, kde začneš táhnout.`
+    : m === 'sel' ? 'Otáčí se kolem vybraného prvku.' : 'Otáčí se kolem středu pohledu.');
 }
 
 renderer.domElement.addEventListener('pointerdown', (e) => {
@@ -917,7 +945,7 @@ renderer.domElement.addEventListener('pointerdown', (e) => {
   lastPtrType = e.pointerType || 'touch';
   const single = pointers.size === 1 && (e.pointerType !== 'mouse' || e.button === 0);
   down = single ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
-  orbit = single ? { x: e.clientX, y: e.clientY, P: null, moved: false } : null;
+  orbit = single ? { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, P: null, moved: false } : null;
 });
 renderer.domElement.addEventListener('pointermove', (e) => {
   if (!pointers.has(e.pointerId)) return;
@@ -932,7 +960,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
   if (!orbit || pointers.size !== 1) return;
   const dx = e.clientX - orbit.x, dy = e.clientY - orbit.y;
   if (!orbit.moved && Math.hypot(dx, dy) < 6) return;
-  if (!orbit.P) orbit.P = currentPivot();
+  if (!orbit.P) orbit.P = currentPivot(orbit.sx, orbit.sy);
   orbit.moved = true;
   orbit.x = e.clientX; orbit.y = e.clientY;
   orbitBy(dx, dy, orbit.P);
@@ -1684,8 +1712,8 @@ $('#btn-iso').addEventListener('click', () => fitView('iso'));
 $('#btn-top').addEventListener('click', () => fitView('top'));
 $('#btn-clip').addEventListener('click', () => toggleClip());
 $('#btn-measure').addEventListener('click', () => toggleMeasure());
-$('#btn-orbit').addEventListener('click', () => setOrbitSel(!S.orbitSel));
-$('#btn-orbit').setAttribute('aria-pressed', String(S.orbitSel));
+$('#btn-orbit').addEventListener('click', () => setOrbitMode(ORBIT_MODES[(ORBIT_MODES.indexOf(S.orbitMode) + 1) % ORBIT_MODES.length]));
+orbitUi();
 $('#btn-edges').addEventListener('click', () => {
   S.edges = !S.edges;
   modelGroup.traverse((o) => { if (o.userData.edge) o.visible = S.edges; });
@@ -7684,4 +7712,4 @@ if (matchMedia('(max-width: 719px)').matches) app.classList.remove('sheet-open')
   maybeStartTour();
 })();
 window.__ifc = S;
-window.__ifcView = { camera, dataGroup, renderer, renderFrame, scene, findSnap, toScreen };
+window.__ifcView = { camera, dataGroup, renderer, renderFrame, scene, findSnap, toScreen, currentPivot };

@@ -726,7 +726,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
           <button class="tool" id="btn-fit" type="button"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Celý</span></button>
           <button class="tool" id="btn-iso" type="button"><svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg><span>3D</span></button>
           <button class="tool" id="btn-top" type="button"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 12h9v8M13 4v4"/></svg><span>Shora</span></button>
-          <button class="tool" id="btn-orbit" type="button" aria-pressed="true" title="Otáčet kolem vybraného prvku"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M4.5 9.5C6 6.2 8.8 4.5 12 4.5s6 1.7 7.5 5"/><path d="M19.5 14.5C18 17.8 15.2 19.5 12 19.5S6 17.8 4.5 14.5"/><path d="M17 9.5h2.8V6.7M7 14.5H4.2v2.8"/></svg><span>Kolem prvku</span></button>
+          <button class="tool" id="btn-orbit" type="button" aria-pressed="true" title="Střed otáčení"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M4.5 9.5C6 6.2 8.8 4.5 12 4.5s6 1.7 7.5 5"/><path d="M19.5 14.5C18 17.8 15.2 19.5 12 19.5S6 17.8 4.5 14.5"/><path d="M17 9.5h2.8V6.7M7 14.5H4.2v2.8"/></svg><span>Kolem prvku</span></button>
           <i class="sep"></i>
           <button class="tool" id="btn-clip" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M6 12V6l6-3 6 3v6" opacity=".45"/><path d="M6 15v3l6 3 6-3v-3"/></svg><span>Řez</span></button>
           <button class="tool" id="btn-edges" type="button" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5Z"/><path d="M5 5l4 4h10M9 9v10"/></svg><span>Hrany</span></button>
@@ -876,7 +876,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
               <dt>Celý</dt><dd>zobrazí celý model</dd>
               <dt>3D</dt><dd>šikmý pohled na model</dd>
               <dt>Shora</dt><dd>pohled shora</dd>
-              <dt>Kolem prvku</dt><dd>když je zapnuté, pohled se otáčí kolem vybraného prvku místo středu obrazovky</dd>
+              <dt>Pod prstem / Kolem prvku / Kolem středu</dt><dd>střed otáčení, ťuknutím na tlačítko se přepíná: <b>pod prstem</b> (s myší pod kurzorem) se pohled otáčí kolem bodu modelu, kde začneš táhnout, mimo model kolem bodu na rovině pod ním; <b>kolem prvku</b> kolem vybraného prvku; <b>kolem středu</b> kolem středu obrazovky</dd>
               <dt>Hrany</dt><dd>zapne nebo vypne obrysové hrany prvků (u velkých modelů vypnutí zrychlí zobrazení)</dd>
             </dl>
             <p>Kompas vpravo nahoře ukazuje sever: u georeferencovaného modelu sever mapy, jinak sever projektu.</p>
