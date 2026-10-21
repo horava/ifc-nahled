@@ -2,7 +2,8 @@
   "name": "ifc-nahled",
   "private": true,
   "scripts": {
-    "build": "esbuild src/main.js --bundle --format=iife --minify --target=safari15 --legal-comments=eof --external:fs --external:path --banner:js=\"/*! IFC prohlížečka | (c) 2026 IFC prohlížečka authors | MIT. Obsahuje / includes: three.js (MIT), web-ifc 0.0.77 (MPL-2.0, beze změn, zdroj: https://github.com/ThatOpen/engine_web-ifc), fflate (MIT), proj4js + mgrs + wkt-parser (MIT), lerc (Apache-2.0). Viz THIRD_PARTY_LICENSES.md */\" --outfile=app.js && cp node_modules/web-ifc/web-ifc.wasm . && cp node_modules/lerc/lerc-wasm.wasm ."
+    "build": "node scripts/build.mjs",
+    "test": "python3 tests/run_tests.py"
   },
   "dependencies": {
     "three": "0.180.0",

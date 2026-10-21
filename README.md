@@ -75,12 +75,16 @@ Nové verze souborů nahraj do repozitáře. Cloudflare Pages je sám nasadí zh
 
 ## Sestavení ze zdrojových kódů
 
-Je potřeba jen při úpravách kódu. Zdrojový kód je v `src/main.js`.
+Je potřeba jen při úpravách kódu. Zdrojový kód je rozdělený na tematické části v `src/parts/`
+(popis v [docs/ARCHITEKTURA.md](docs/ARCHITEKTURA.md)).
 
 ```bash
 npm install
-npm run build        # vytvoří app.js a zkopíruje web-ifc.wasm
+npm run build        # spojí části, vytvoří app.js a zkopíruje web-ifc.wasm a lerc-wasm.wasm
+npm test             # automatické testy (viz tests/README.md)
 ```
+
+Přehled verzí je v [CHANGELOG.md](CHANGELOG.md), odložené nápady v [docs/NAPADY.md](docs/NAPADY.md).
 
 `src/make_sample.py` (IfcOpenShell + pyproj) vygeneruje georeferencovaný ukázkový model `sample.ifc`:
 

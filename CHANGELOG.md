@@ -1,0 +1,56 @@
+# Změny
+
+Číslo verze odpovídá `VERSION` v `sw.js` (`ifc-nahled-vNN`) a zobrazuje se v návodu v kapitole O aplikaci.
+
+## v44 – údržba
+- Zdrojový kód rozdělený na 27 tematických částí v `src/parts/` (sestavení dává stejný `app.js`).
+- Automatické testy v `tests/` (13 testů, napodobenina mapových služeb, testovací modely a generátory).
+- Oprava: během načítání modelu se mohl začít stavět index vlastností z rozpracovaného modelu
+  (barvení pak nenabízelo vlastnosti místností a porovnání hlásilo změny navíc). Index i vazby teď počkají na konec načítání.
+- Přichytávání při měření spolehlivěji chytá rohy na obrysu modelu (dva kroužky paprsků kolem kurzoru).
+- Dvojité ťuknutí toleruje pomalejší druhé ťuknutí (400 ms místo 320 ms).
+- CHANGELOG, poznámky k architektuře a seznam nápadů do budoucna (`docs/`).
+
+## v43
+- Strom: prvek se rozbalí na typ, vrstvy materiálu s tloušťkou, otvory s výplní a prostupy; ve Vlastnostech tabulka Skladba materiálu; vlastnosti typu ze stromu.
+
+## v42
+- Otáčení kolem bodu pod prstem / kurzorem (výchozí), přepínač režimů Pod prstem – Kolem prvku – Kolem středu.
+
+## v41
+- Dvojité ťuknutí už v Safari nezvětšuje celou stránku.
+
+## v40
+- Ostré mapové podklady: po přiblížení se dočte výřez v rozlišení displeje (3D i půdorys), volba Popisky WMS map: Ostré / Větší písmo.
+
+## v39
+- Velké modely: čtení souboru po částech a jeho uvolnění po zpracování, průběh načítání, sloučené kreslení po podlažích a materiálech, instance opakovaných tvarů, u souborů nad 60 MB stínování po ploškách.
+- Citace zdrojů mapových dat ve 3D, v záložce Data a v PNG půdorysu (ČÚZK, rok; DMVS; statutární město Brno; údaje z popisu vlastních služeb).
+
+## v38
+- Průvodce při prvním spuštění a návod pod otazníkem (kapitoly, O aplikaci, licence).
+
+## v37
+- Service worker: otevření aplikace bere čerstvou stránku a předá přesměrování na přihlášení (příprava na hosting s přihlášením); uložené kopie bez příznaku přesměrování (Safari).
+
+## v36
+- Měření: přichytávání k lomovým bodům a hranám i sousedních prvků, nabídka místa při najetí myší / Apple Pencil, náhled měření, pravoúhlý trojúhelník (svislá a vodorovná vzdálenost), Esc.
+
+## v35
+- Přepínač světlého a tmavého režimu v horní liště (výchozí podle zařízení).
+
+## v34
+- Barvy IFC v sRGB (dřív vybledlé).
+
+## v33
+- 3D budovy ze SceneServeru se skryjí v půdorysu načtených IFC modelů.
+
+## do v32
+- 3D prohlížení s dotykovým ovládáním, výběr ťuknutím s předností místností a procházením prvků pod prstem.
+- Strom, vlastnosti (Psety, Qsety, typ, materiál), podlaží a kategorie, skrytí a izolace.
+- Řezy (vodorovný, příčný, podélný), půdorys na rozdělené obrazovce s popisky místností a exportem PNG.
+- Georeference (IfcMapConversion, ePSet_MapConversion), kontroly, odvození jednotky mapy, souřadnice bodů, CSV.
+- Hledání a filtr podle vlastností, barvení místností s legendou, porovnání verzí, export místností do Excelu.
+- BCF 2.1, nedávné modely v zařízení, více modelů najednou (zarovnání podle georeference).
+- Záložka Data: ČÚZK, DMVS (WMS 1.3.0), RÚIAN, terén DMR 5G a DMP 1G (LERC) s pokládáním map na terén, 3D budovy Brna (I3S), informace o místě, pořadí vrstev.
+- Offline režim (service worker), licence knihoven.
