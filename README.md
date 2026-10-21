@@ -9,7 +9,7 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - vlastnosti prvku: atributy, GlobalId, materiál, všechny Psety a Qsety včetně vlastností typu
 - vlastnosti projektu, pozemku (RefLatitude/RefLongitude, adresa), budovy a podlaží (Elevation, výška v Bpv): klepnutím na název ve Stromu nebo na podlaží v panelu Model, u podlaží a budovy i počet a seznam místností
 - výběr ťuknutím dává přednost místnosti před podlahou nebo stěnou, se kterou splývá; další ťuknutí na stejné místo vybere prvek pod ní
-- strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků
+- strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků; prvek se ve stromu dál rozbalí na typ, vrstvy materiálu s tloušťkou, otvory s výplněmi a prostupy (skladba materiálu je i ve Vlastnostech)
 - **hledání** (záložka Hledat) v názvech, číslech místností, typech, materiálech, GlobalId a hodnotách všech sad vlastností, s **filtrem podle vlastnosti** (=, ≠, obsahuje, začíná na, >, <, je/není vyplněno); výsledky jde izolovat, zvýraznit nebo skrýt
 - **barvení místností podle vlastnosti** (panel Model): výběr nabízí jen atributy a vlastnosti místností, obarví se místnosti a ostatní prvky zprůhlední; legenda nad modelem vypíše všechny hodnoty bez seskupování, ťuknutím na položku zůstanou vidět jen místnosti s touto hodnotou; čísla a podlaží dostanou postupnou škálu
 - **porovnání dvou verzí modelu** (Model → Porovnat se starší verzí…): přidané, změněné (geometrie, vlastnosti, atributy) a odebrané prvky podle GlobalId, odebrané jako červení „duchové“, u změněného prvku tabulka před → po, export změn do CSV

@@ -2205,6 +2205,10 @@ async function renderProps() {
   try {
     const item = await api.properties.getItemProperties(mid, id, false);
     const psets = (await api.properties.getPropertySets(mid, id, true)).map((p) => ({ p, from: null }));
+    // typ prvku (otevřený ze stromu): sady vlastností jsou přímo na typu
+    for (const r of item.HasPropertySets || []) {
+      try { const ps = await api.properties.getItemProperties(mid, refId(r), true); if (ps) psets.push({ p: ps, from: null }); } catch (e) { /* */ }
+    }
     let typeNames = [];
     try {
       const types = await api.properties.getTypeProperties(mid, id, true);
@@ -2268,6 +2272,13 @@ async function renderProps() {
     if (materials.length) attrs.push(['Materiál', materials.join(', ')]);
     if (!rec) { try { attrs.push(...spatialRows(id, cls)); } catch (e) { console.warn(e); } }
     root.appendChild(table('Atributy', attrs));
+    if (rec) {
+      // skladba (vrstvy) materiálu; vazby se při prvním použití dočtou na pozadí a panel se překreslí
+      if (S.rel?.gen === S.modelGen) {
+        const mrows = materialRowsFor(id);
+        if (mrows.length > 1 || mrows.some((r) => r.label !== 'Materiál')) root.appendChild(table('Skladba materiálu', mrows.map((r) => [r.label, r.value])));
+      } else ensureRelIdx().then(() => { if (token === propToken) renderProps(); }).catch(() => {});
+    }
     if (!rec && ['IFCBUILDINGSTOREY', 'IFCBUILDING'].includes(U(cls))) {
       try { const sp = spacesIn(id); if (sp.length) root.appendChild(spaceSection(sp, val(item.Name) || '')); } catch (e) { console.warn(e); }
     }
@@ -3372,6 +3383,109 @@ function setHiddenFor(ids, hide) {
   if (S.isolated) S.isolated = null;
   applyVisibility();
 }
+/* ---------- podrobnosti prvku ve stromu (typ, vrstvy materiálu, otvory a jejich výplně) ----------
+   Vazby se jednou projdou a uloží (typ, materiál, otvory, výplně), podrobnosti konkrétního prvku se
+   čtou až při rozbalení. */
+function ensureRelIdx() {
+  if (S.rel && S.rel.mid === S.modelID && S.rel.gen === S.modelGen) return Promise.resolve(S.rel);
+  if (S.relPending) return S.relPending;
+  const api = S.api, mid = S.modelID, gen = S.modelGen;
+  S.relPending = (async () => {
+    const R = { mid, gen, type: new Map(), mat: new Map(), voids: new Map(), fills: new Map() };
+    const each = async (T, fn) => {
+      let v; try { v = api.GetLineIDsWithType(mid, T); } catch (e) { return; }
+      for (let i = 0, n = v.size(); i < n; i++) {
+        if (i % 400 === 399) { await yieldUi(); if (S.modelGen !== gen) throw new Error('aborted'); }
+        let rel; try { rel = api.GetLine(mid, v.get(i), false); } catch (e) { continue; }
+        if (rel) fn(rel);
+      }
+    };
+    const push = (m, k, v) => { if (k == null || v == null) return; if (!m.has(k)) m.set(k, []); m.get(k).push(v); };
+    await each(WebIFC.IFCRELDEFINESBYTYPE, (r) => { const t = refId(r.RelatingType); for (const o of r.RelatedObjects || []) R.type.set(refId(o), t); });
+    await each(WebIFC.IFCRELASSOCIATESMATERIAL, (r) => { const m = refId(r.RelatingMaterial); for (const o of r.RelatedObjects || []) R.mat.set(refId(o), m); });
+    await each(WebIFC.IFCRELVOIDSELEMENT, (r) => push(R.voids, refId(r.RelatingBuildingElement), refId(r.RelatedOpeningElement)));
+    await each(WebIFC.IFCRELFILLSELEMENT, (r) => push(R.fills, refId(r.RelatingOpeningElement), refId(r.RelatedBuildingElement)));
+    if (S.modelGen === gen) S.rel = R;
+    return R;
+  })().finally(() => { S.relPending = null; });
+  return S.relPending;
+}
+const lineType = (id) => { try { return S.api.GetLineType(S.modelID, id); } catch (e) { return 0; } };
+const lineOf = (id) => { try { return S.api.GetLine(S.modelID, id, false); } catch (e) { return null; } };
+const numRaw = (x) => Number(x && typeof x === 'object' ? x.value : x);
+const fmtThickness = (v) => {
+  const mm = Number(v) * (S.geo?.pu ?? 1) * 1000;
+  return Number.isFinite(mm) ? `${nf.format(Math.round(mm * 10) / 10)} mm` : '';
+};
+/* materiál prvku (nebo jeho typu) jako řádky: vrstvy s tloušťkou, složky, profily, seznam */
+function materialRowsFor(id) {
+  const R = S.rel;
+  if (!R) return [];
+  let mId = R.mat.get(id);
+  if (mId == null) { const t = R.type.get(id); if (t != null) mId = R.mat.get(t); }
+  if (mId == null) return [];
+  const name = (mid) => val(lineOf(mid)?.Name) || '';
+  const rows = [];
+  const walk = (x, depth) => {
+    if (x == null || depth > 4) return;
+    const L = lineOf(x);
+    if (!L) return;
+    switch (L.type) {
+      case WebIFC.IFCMATERIALLAYERSETUSAGE: walk(refId(L.ForLayerSet), depth + 1); break;
+      case WebIFC.IFCMATERIALLAYERSET:
+        for (const ly of L.MaterialLayers || []) {
+          const l = lineOf(refId(ly));
+          if (!l) continue;
+          const nm = name(refId(l.Material)) || val(l.Name) || 'Vrstva';
+          rows.push({ label: 'Vrstva materiálu', value: [nm, fmtThickness(numRaw(l.LayerThickness))].filter(Boolean).join(' · ') });
+        }
+        break;
+      case WebIFC.IFCMATERIALPROFILESETUSAGE: walk(refId(L.ForProfileSet), depth + 1); break;
+      case WebIFC.IFCMATERIALPROFILESET:
+        for (const pr of L.MaterialProfiles || []) {
+          const q = lineOf(refId(pr));
+          if (!q) continue;
+          const prof = lineOf(refId(q.Profile));
+          rows.push({ label: 'Profil', value: [name(refId(q.Material)), val(prof?.ProfileName) || val(q.Name)].filter(Boolean).join(' · ') });
+        }
+        break;
+      case WebIFC.IFCMATERIALCONSTITUENTSET:
+        for (const c of L.MaterialConstituents || []) {
+          const q = lineOf(refId(c));
+          if (!q) continue;
+          const fr = numRaw(q.Fraction);
+          rows.push({ label: 'Složka materiálu', value: [val(q.Name), name(refId(q.Material)), Number.isFinite(fr) && fr > 0 ? `${nf.format(Math.round(fr * 1000) / 10)} %` : ''].filter(Boolean).join(' · ') });
+        }
+        break;
+      case WebIFC.IFCMATERIALLIST: for (const m of L.Materials || []) rows.push({ label: 'Materiál', value: name(refId(m)) }); break;
+      case WebIFC.IFCMATERIAL: rows.push({ label: 'Materiál', value: val(L.Name) || '' }); break;
+      default: break;
+    }
+  };
+  walk(mId, 0);
+  return rows.filter((r) => r.value);
+}
+function elementDetails(id) {
+  const R = S.rel;
+  if (!R) return [];
+  const out = [];
+  const tid = R.type.get(id);
+  if (tid != null) {
+    const t = lineOf(tid);
+    let tc = ''; try { tc = S.api.GetNameFromTypeCode(lineType(tid)); } catch (e) { /* */ }
+    out.push({ label: `Typ · ${prettyCls(tc)}`, value: val(t?.Name) || 'bez názvu', inspect: tid });
+  }
+  out.push(...materialRowsFor(id));
+  for (const op of R.voids.get(id) || []) {
+    const o = lineOf(op);
+    const oname = val(o?.Name) || val(o?.Tag) || `#${op}`;
+    const fill = (R.fills.get(op) || [])[0];
+    if (fill != null) out.push({ label: 'Otvor s výplní', value: `${oname} → ${nodeName(fill) || prettyCls(S.elements.get(fill)?.cls || '')}`, select: S.elements.has(fill) ? fill : null, inspect: S.elements.has(fill) ? null : fill });
+    else out.push({ label: 'Otvor / prostup', value: oname, inspect: op });
+  }
+  return out;
+}
+const hasDetails = (id) => { const R = S.rel; return !!R && (R.type.has(id) || R.mat.has(id) || R.voids.has(id)); };
 function renderTree(reveal = false) {
   const root = $('#panel-tree');
   if (S.modelID == null || !S.tree) { root.replaceChildren(el('p', 'muted pad', 'Strom modelu není k dispozici.')); return; }
@@ -3389,13 +3503,17 @@ function renderTree(reveal = false) {
     row.style.paddingLeft = `${4 + depth * 14}px`;
     const kids = node.group ? node.children : treeChildren(node);
     const open = S.treeOpen.has(key);
-    const tw = el('button', 'twist' + (kids.length ? '' : ' leaf'));
+    // prvek (ne prostorová struktura): rozbalí se i na typ, vrstvy materiálu a otvory
+    const isEl = !node.group && !SPATIAL.has(U(node.type)) && hasDetails(node.expressID);
+    const det = open && isEl ? elementDetails(node.expressID) : [];
+    const expandable = kids.length || isEl;
+    const tw = el('button', 'twist' + (expandable ? '' : ' leaf'));
     tw.type = 'button';
     tw.setAttribute('aria-label', open ? 'Sbalit' : 'Rozbalit');
     tw.setAttribute('aria-expanded', String(open));
-    tw.innerHTML = kids.length ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>' : '';
+    tw.innerHTML = expandable ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>' : '';
     if (open) tw.classList.add('open');
-    tw.addEventListener('click', () => { if (!kids.length) return; if (open) S.treeOpen.delete(key); else S.treeOpen.add(key); renderTree(); });
+    tw.addEventListener('click', () => { if (!expandable) return; if (open) S.treeOpen.delete(key); else S.treeOpen.add(key); renderTree(); });
     const ids = node.group ? node.children.reduce((acc, c) => { const d = descIds(c); for (let i = 0; i < d.length; i++) acc.push(d[i]); return acc; }, []) : descIds(node);
     const allHidden = ids.length > 0 && ids.every((i) => S.hidden.has(i));
     const eye = el('button', 'eye');
@@ -3420,6 +3538,24 @@ function renderTree(reveal = false) {
     const cnt = el('span', 'row-count', ids.length && (kids.length || node.group) ? ids.length.toLocaleString('cs-CZ') : '');
     row.append(tw, eye, lab, cnt);
     li.appendChild(row);
+    if (open && det.length) {
+      const sub = el('ul', 'tree');
+      for (const d of det) {
+        const dli = el('li');
+        const drow = el('div', 'tnode tdetail');
+        drow.style.paddingLeft = `${4 + (depth + 1) * 14}px`;
+        const b = el('button', 'tlabel');
+        b.type = 'button';
+        b.append(el('span', 'tname', d.value), el('span', 'tcls', d.label));
+        if (d.select != null) b.addEventListener('click', () => select(d.select, { keepPanel: true }));
+        else if (d.inspect != null) b.addEventListener('click', () => inspect(d.inspect, 'tree'));
+        else b.disabled = true;
+        drow.append(el('span'), el('span'), b, el('span'));
+        dli.appendChild(drow);
+        sub.appendChild(dli);
+      }
+      li.appendChild(sub);
+    }
     if (open && kids.length) {
       const sub = el('ul', 'tree');
       const lim = S.treeLimit.get(key) || TREE_PAGE;
@@ -3443,6 +3579,7 @@ function renderTree(reveal = false) {
   }
   add(S.tree, 0, ul);
   root.appendChild(ul);
+  if (!S.rel || S.rel.gen !== S.modelGen) ensureRelIdx().then(() => { if (!$('#panel-tree').hidden) renderTree(); }).catch(() => {});
   if (reveal) {
     const sel = root.querySelector('.tnode.is-sel');
     if (sel) sel.scrollIntoView({ block: 'center' }); else root.scrollTop = scroll;
