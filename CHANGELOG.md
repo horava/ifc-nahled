@@ -2,6 +2,17 @@
 
 Číslo verze odpovídá `VERSION` v `sw.js` (`ifc-nahled-vNN`) a zobrazuje se v návodu v kapitole O aplikaci.
 
+## v45 – pohodlnější ovládání
+- Tlačítka Celý a 3D sloučená: Celý drží směr pohledu, druhým stiskem (nebo po pohledu shora) přejde na výchozí 3D pohled.
+- Zaměřit, Skrýt, Izolovat a Vše jsou v malé liště nad nástroji a objeví se, jen když dávají smysl (výběr, skryté prvky); křížek zruší výběr.
+- Zpět: vrátí skrytí, izolaci, skrytí podlaží a kategorií, zapnutí řezu a skoky pohledu (Celý, Shora, Zaměřit); ⌘Z / Ctrl+Z.
+- Když se lišta nevejde, režim otáčení, Hrany a Souřadnice jsou pod Více. Režim otáčení už nesvítí jako zapnutý nástroj.
+- Spodní panel na telefonu a na iPadu na výšku: úchyt, tři výšky (proužek, půlka, celá), tažení i ťuknutí, stažením se zavře. Lišta a akce jsou nad panelem, 3D pohled se posune nad panel a vybraný prvek se neschová pod něj.
+- Hlášky menší a dole nad lištou; nápověda k opakovanému ťuknutí jen prvních pár použití.
+- Na malé obrazovce z odznaku ukázky jen štítek; úspornější lišty na telefonu naležato.
+- Oprava: přepnutí záložky panelu nebo zvýraznění ve stromu mohlo na telefonu posunout celou stránku.
+- Testy: 15 (nově lišta a Zpět, spodní panel na telefonu).
+
 ## v44 – údržba
 - Zdrojový kód rozdělený na 27 tematických částí v `src/parts/` (sestavení dává stejný `app.js`).
 - Automatické testy v `tests/` (13 testů, napodobenina mapových služeb, testovací modely a generátory).

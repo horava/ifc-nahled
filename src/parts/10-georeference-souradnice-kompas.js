@@ -585,6 +585,7 @@ function toggleCoord(force) {
   if (!coord.on && !S.measure.on) { snapHint.hidden = true; hoverSnap = null; requestRender(); }
   $('#btn-coord').setAttribute('aria-pressed', String(coord.on));
   updateCoordBar();
+  updateToolbar();
 }
 $('#btn-coord').addEventListener('click', () => toggleCoord());
 $('#c-done').addEventListener('click', () => toggleCoord(false));

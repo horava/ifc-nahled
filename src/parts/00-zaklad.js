@@ -56,6 +56,7 @@ const S = {
 
 const geoPts = [];          // body nástroje Souřadnice
 const coord = { on: false }; // stav nástroje Souřadnice
+const undoStack = [];        // kroky pro Zpět (část 07)
 const plan = { on: false, storey: 'auto', shown: null, rt: null, cam: new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 10000), view: null, imgView: null, fitPpm: 0, dirty: true, timer: 0, north: 'project' };
 
 /* ---------- three setup ---------- */
@@ -185,6 +186,7 @@ function resize() {
   if (typeof dataGroup !== 'undefined') dataGroup.traverse((o) => { if (o.material?.resolution) o.material.resolution.set(w, h); });
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
+  try { updateViewOffset(); } catch (e) { /* před spuštěním */ }
   requestRender();
 }
 new ResizeObserver(resize).observe(viewport);

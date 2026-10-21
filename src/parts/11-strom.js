@@ -262,7 +262,9 @@ function renderTree(reveal = false) {
   if (!S.rel || S.rel.gen !== S.modelGen) ensureRelIdx().then(() => { if (!$('#panel-tree').hidden) renderTree(); }).catch(() => {});
   if (reveal) {
     const sel = root.querySelector('.tnode.is-sel');
-    if (sel) sel.scrollIntoView({ block: 'center' }); else root.scrollTop = scroll;
+    // jen uvnitř panelu (scrollIntoView by posunul i stránku)
+    if (sel) root.scrollTop += sel.getBoundingClientRect().top - root.getBoundingClientRect().top - root.clientHeight / 2 + sel.offsetHeight / 2;
+    else root.scrollTop = scroll;
   } else root.scrollTop = scroll;
 }
 

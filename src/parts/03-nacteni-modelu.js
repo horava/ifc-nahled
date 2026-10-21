@@ -60,6 +60,7 @@ async function loadIfc(source, fileName) {
     return await loadIfcInner(source, fileName);
   } finally {
     S.loading = false;
+    resetUndo();
     loadDone();
   }
 }
@@ -223,7 +224,7 @@ async function loadIfcInner(source, fileName) {
     $('#empty-hint').hidden = true;
     memlog('done');
     hideLoading();
-    toast(`Načteno: ${S.elements.size.toLocaleString('cs-CZ')} prvků za ${nf.format(S.meta.ms / 1000)} s`);
+    toast(`Načteno ${S.elements.size.toLocaleString('cs-CZ')} prvků (${nf.format(S.meta.ms / 1000)} s)`);
   } catch (err) {
     console.error(err);
     hideLoading();

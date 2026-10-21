@@ -119,7 +119,7 @@ button { font: inherit; color: inherit; }
 .stage-empty strong { font-family: var(--f-display); font-size: 22px; color: var(--ink); font-weight: 600; }
 
 /* toolbar */
-.toolbar { position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; box-sizing: border-box; bottom: 12px; display: flex; align-items: stretch; gap: 2px;
+.toolbar { position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; box-sizing: border-box; bottom: calc(12px + var(--sheet-cover, 0px)); display: flex; align-items: stretch; gap: 2px;
   padding: 6px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
 .toolbar::-webkit-scrollbar { display: none; }
@@ -131,9 +131,22 @@ button { font: inherit; color: inherit; }
 .tool[aria-pressed="true"], .tool[aria-pressed="true"]:hover:not(:disabled) { background: var(--accent); color: var(--accent-ink); }
 .tool:disabled { opacity: 0.35; cursor: default; }
 .sep { flex: none; width: 1px; margin: 8px 4px; background: var(--line); }
+/* Více: méně používané nástroje, když se lišta nevejde */
+.more-pop { position: absolute; width: max-content; box-sizing: border-box; left: 50%; transform: translateX(-50%); bottom: calc(76px + var(--sheet-cover, 0px)); z-index: 5; display: flex; gap: 2px; padding: 6px;
+  border-radius: 14px; background: var(--panel); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18); max-width: calc(100% - 24px); }
+#btn-more[aria-expanded="true"] { background: var(--hover); }
+/* akce s vybraným prvkem a Zpět: objeví se nad lištou, jen když dávají smysl */
+.card.actbar { width: auto; display: flex; align-items: stretch; gap: 2px; padding: 4px; max-width: 100%; }
+.act { flex: none; display: grid; justify-items: center; align-content: center; gap: 1px; min-width: 50px; height: 46px; padding: 0 4px;
+  border: 0; border-radius: 9px; background: transparent; cursor: pointer; color: var(--ink); }
+.act svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.act span { font-size: 10.5px; font-weight: 500; }
+.act:hover { background: var(--hover); }
+.act-x { min-width: 38px; color: var(--muted); }
+.actbar .sep { margin: 6px 2px; }
 
 /* dock above the toolbar: measurement bar + section panel */
-.dock { position: absolute; left: 50%; bottom: 80px; transform: translateX(-50%); width: min(400px, calc(100% - 24px));
+.dock { position: absolute; left: 50%; bottom: calc(80px + var(--sheet-cover, 0px)); transform: translateX(-50%); width: min(400px, calc(100% - 24px));
   display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; z-index: 3; }
 .dock > * { pointer-events: auto; }
 .card { width: 100%; box-sizing: border-box; border-radius: 12px; background: var(--glass); border: 1px solid var(--line);
@@ -203,7 +216,7 @@ button { font: inherit; color: inherit; }
   background: color-mix(in srgb, var(--sel) 25%, transparent); box-shadow: 0 0 0 2px var(--panel); pointer-events: none; z-index: 2; }
 .pivot::after { content: ""; position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px 0 0 -2px; border-radius: 50%; background: var(--sel); }
 /* citace mapových podkladů ve 3D */
-.data-attr { position: absolute; right: 10px; bottom: 82px; z-index: 3; max-width: min(60%, 420px); padding: 3px 8px; border-radius: 6px;
+.data-attr { position: absolute; right: 10px; bottom: calc(82px + var(--sheet-cover, 0px)); z-index: 3; max-width: min(60%, 420px); padding: 3px 8px; border-radius: 6px;
   background: var(--glass); color: var(--muted); font-size: 11px; line-height: 1.35; pointer-events: none; text-align: right; }
 @media (max-width: 719px) { .data-attr { bottom: auto; top: 58px; right: 8px; max-width: 70%; } }
 /* measurement overlay */
@@ -295,8 +308,8 @@ button { font: inherit; color: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 #loading-title { font-weight: 600; overflow-wrap: anywhere; }
 #loading-step { font-size: 13px; color: var(--muted); }
-.toast { position: absolute; top: 58px; left: 50%; transform: translateX(-50%); z-index: 6; max-width: calc(100% - 24px); box-sizing: border-box;
-  padding: 10px 16px; border-radius: 12px; background: var(--ink); color: var(--panel); font-size: 14px; text-align: center; }
+.toast { max-width: 100%; box-sizing: border-box; padding: 7px 14px; border-radius: 10px; background: var(--ink); color: var(--panel);
+  font-size: 13px; line-height: 1.35; text-align: center; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.18); pointer-events: none; }
 .toast.is-error { background: var(--error); color: #fff; }
 .drop { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: color-mix(in srgb, var(--accent) 22%, transparent);
   font-family: var(--f-display); font-size: 26px; font-weight: 600; color: var(--ink); border: 3px dashed var(--accent); }
@@ -599,12 +612,20 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
 .rc-open .row-label, .rc-open .row-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ref-badge { background: color-mix(in srgb, var(--tint, #2a78d6) 18%, transparent); color: var(--ink); }
 @media (max-width: 719px) { .fld-grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 719px) {
+/* spodní panel (telefon, tablet na výšku): úchyt, tři výšky (--sheet-h nastavuje skript) */
+.sheet-grab { display: none; flex: none; height: 24px; align-items: center; justify-content: center; touch-action: none; cursor: grab; }
+.sheet-grab::before { content: ""; width: 40px; height: 5px; border-radius: 3px; background: var(--line); }
+.sheet-grab:hover::before, .sheet-grab:focus-visible::before { background: var(--muted); }
+@media (max-width: 719px), (orientation: portrait) and (max-width: 1100px) {
   :root { --panel-w: 100%; }
   .main, #app:not(.sheet-open) .main { grid-template-columns: minmax(0, 1fr); }
-  .panel, #app:not(.sheet-open) .panel { display: flex; position: absolute; left: 0; right: 0; bottom: 0; height: 58%; z-index: 8;
-    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18); transition: transform 0.25s ease; }
+  .panel, #app:not(.sheet-open) .panel { display: flex; position: absolute; left: 0; right: 0; bottom: 0; height: var(--sheet-h, 50%); z-index: 8;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18); transition: transform 0.25s ease, height 0.25s ease; }
+  #app.sheet-drag .panel { transition: none; }
   #app:not(.sheet-open) .panel { transform: translateY(calc(100% + 24px)); visibility: hidden; }
+  .sheet-grab { display: flex; }
+}
+@media (max-width: 719px) {
   .brand-name { font-size: 18px; }
   .bar { gap: 8px; }
   .file { display: none; }
@@ -614,6 +635,16 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
   .clip-pop .sbtn { padding: 0 9px; }
 }
 @media (min-width: 720px) { .file { display: block; } }
+/* nízká obrazovka (telefon naležato): úspornější lišty */
+@media (max-height: 520px) {
+  #app { padding-block: 6px 8px; gap: 6px; }
+  .btn { min-height: 38px; } .btn.icon { width: 38px; }
+  .tool { height: 46px; min-width: 46px; } .toolbar { padding: 4px; bottom: calc(8px + var(--sheet-cover, 0px)); }
+  .dock { bottom: calc(66px + var(--sheet-cover, 0px)); } .more-pop { bottom: calc(62px + var(--sheet-cover, 0px)); }
+}
+@media (max-height: 520px) and (min-width: 720px) { :root { --panel-w: 320px; } }
+/* malá obrazovka: z odznaku ukázky jen štítek */
+@media (max-width: 719px), (max-height: 520px) { .badge { padding-right: 6px; } .badge .badge-text { display: none; } }
 @media (max-width: 430px) { .brand-name { display: none; } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } .panel { transition: none !important; } }
 </style>
@@ -652,7 +683,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
       <div class="split" id="split">
         <div class="pane3d" id="pane3d">
         <div id="viewport"></div>
-          <div class="badge" id="sample-badge" hidden><b>Ukázka</b> Malý dvoupodlažní pavilon. Vlastní soubor otevřete vpravo nahoře.</div>
+          <div class="badge" id="sample-badge" hidden><b>Ukázka</b><span class="badge-text">Malý dvoupodlažní pavilon. Vlastní soubor otevřete vpravo nahoře.</span></div>
           <div class="stage-empty" id="empty-hint" hidden>
             <strong>Otevřete IFC soubor</strong>
             <span>Ze složky Soubory, iCloudu nebo OneDrivu. Model se zpracuje přímo v zařízení.</span>
@@ -671,6 +702,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
         <div class="pivot" id="pivot" hidden aria-hidden="true"></div>
           <div class="compass" id="compass" hidden aria-hidden="true"><svg viewBox="0 0 40 40"><circle cx="20" cy="20" r="18" class="cmp-ring"/><g id="compass-needle"><path d="M20 5l5 15h-10z" class="cmp-n"/><path d="M20 35l5-15h-10z" class="cmp-s"/></g><text x="20" y="13.5" class="cmp-t" text-anchor="middle">S</text></svg></div>
         <div class="dock">
+          <div class="toast" id="toast" role="status" hidden></div>
           <div class="card measure-bar" id="coord-bar" hidden>
             <div class="m-text"><span class="m-main mono-num" id="c-main">Klepněte do modelu</span><span class="m-sub" id="c-sub"></span></div>
             <button class="sbtn" id="c-copy" type="button">Kopírovat</button>
@@ -721,24 +753,29 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             <b id="clip-mini-mode">Vodorovný</b><span class="clip-val" id="clip-mini-value"></span>
             <span class="ib" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></svg></span>
           </button>
+          <div class="card actbar" id="actbar" role="toolbar" aria-label="Akce" hidden>
+            <button class="act" id="btn-undo" type="button" title="Vrátit poslední krok (⌘Z)" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg><span>Zpět</span></button>
+            <i class="sep" id="act-sep" hidden></i>
+            <button class="act" id="btn-focus" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span>Zaměřit</span></button>
+            <button class="act" id="btn-hide" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"/></svg><span>Skrýt</span></button>
+            <button class="act" id="btn-isolate" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M3 7V3h4M21 7V3h-4M3 17v4h4M21 17v4h-4"/></svg><span>Izolovat</span></button>
+            <button class="act" id="btn-showall" type="button" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><span>Vše</span></button>
+            <button class="act act-x" id="btn-desel" type="button" aria-label="Zrušit výběr" title="Zrušit výběr" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+          </div>
         </div>
         <nav class="toolbar" aria-label="Nástroje">
           <button class="tool" id="btn-fit" type="button"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg><span>Celý</span></button>
-          <button class="tool" id="btn-iso" type="button"><svg viewBox="0 0 24 24"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg><span>3D</span></button>
           <button class="tool" id="btn-top" type="button"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 12h9v8M13 4v4"/></svg><span>Shora</span></button>
-          <button class="tool" id="btn-orbit" type="button" aria-pressed="true" title="Střed otáčení"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M4.5 9.5C6 6.2 8.8 4.5 12 4.5s6 1.7 7.5 5"/><path d="M19.5 14.5C18 17.8 15.2 19.5 12 19.5S6 17.8 4.5 14.5"/><path d="M17 9.5h2.8V6.7M7 14.5H4.2v2.8"/></svg><span>Kolem prvku</span></button>
+          <button class="tool opt" id="btn-orbit" type="button" title="Střed otáčení"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.5"/><path d="M4.5 9.5C6 6.2 8.8 4.5 12 4.5s6 1.7 7.5 5"/><path d="M19.5 14.5C18 17.8 15.2 19.5 12 19.5S6 17.8 4.5 14.5"/><path d="M17 9.5h2.8V6.7M7 14.5H4.2v2.8"/></svg><span>Kolem prvku</span></button>
           <i class="sep"></i>
           <button class="tool" id="btn-clip" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 12h18"/><path d="M6 12V6l6-3 6 3v6" opacity=".45"/><path d="M6 15v3l6 3 6-3v-3"/></svg><span>Řez</span></button>
-          <button class="tool" id="btn-edges" type="button" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5Z"/><path d="M5 5l4 4h10M9 9v10"/></svg><span>Hrany</span></button>
+          <button class="tool opt" id="btn-edges" type="button" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5Z"/><path d="M5 5l4 4h10M9 9v10"/></svg><span>Hrany</span></button>
           <button class="tool" id="btn-measure" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 17 17 3l4 4L7 21Z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/></svg><span>Měřit</span></button>
-        <button class="tool" id="btn-coord" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.3"/></svg><span>Souřadnice</span></button>
+          <button class="tool opt" id="btn-coord" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.3"/></svg><span>Souřadnice</span></button>
           <button class="tool" id="btn-plan" type="button" aria-pressed="false"><svg viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="17" height="17" rx="1"/><path d="M3.5 11h8V3.5M11.5 15v5.5M15 11h5.5"/></svg><span>Půdorys</span></button>
-          <i class="sep"></i>
-          <button class="tool" id="btn-focus" type="button" disabled><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span>Zaměřit</span></button>
-          <button class="tool" id="btn-hide" type="button" disabled><svg viewBox="0 0 24 24"><path d="M3 3l18 18M10.6 6.1A10.7 10.7 0 0 1 12 6c6.4 0 10 6 10 6a17 17 0 0 1-3.2 3.8M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a9.9 9.9 0 0 0 5.4-1.6"/></svg><span>Skrýt</span></button>
-          <button class="tool" id="btn-isolate" type="button" disabled><svg viewBox="0 0 24 24"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M3 7V3h4M21 7V3h-4M3 17v4h4M21 17v4h-4"/></svg><span>Izolovat</span></button>
-          <button class="tool" id="btn-showall" type="button" disabled><svg viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><span>Vše</span></button>
+          <button class="tool" id="btn-more" type="button" aria-expanded="false" aria-controls="more-pop" hidden><svg viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></svg><span>Více</span></button>
         </nav>
+        <div class="more-pop" id="more-pop" role="group" aria-label="Další nástroje" hidden></div>
         </div>
         <div class="divider" id="divider" role="separator" aria-orientation="vertical" aria-label="Změnit poměr modelu a půdorysu" tabindex="0" hidden><span></span></div>
         <section class="pane-plan" id="plan" hidden aria-label="Půdorys">
@@ -774,13 +811,13 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
 
 
 
-      <div class="toast" id="toast" role="status" hidden></div>
       <div class="loading" id="loading">
         <div class="loading-card"><div class="spinner"></div><div id="loading-title">Spouštím prohlížeč</div><div id="loading-step">Načítám jádro web-ifc…</div></div>
       </div>
     </section>
 
     <aside class="panel" aria-label="Model a vlastnosti">
+      <div class="sheet-grab" id="sheet-grab" role="button" tabindex="0" aria-label="Velikost panelu: táhni nebo ťukni"></div>
       <div class="tabs" role="tablist">
         <button class="tab" type="button" role="tab" data-tab="model" aria-selected="true"><span class="tab-iw"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 20 7.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg></span><span class="tab-l">Model</span></button>
         <button class="tab" type="button" role="tab" data-tab="tree" aria-selected="false"><span class="tab-iw"><svg class="tab-ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-4h12v4"/></svg></span><span class="tab-l">Strom</span></button>
@@ -851,8 +888,10 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             </ul>
             <h4>Rozvržení</h4>
             <ul>
-              <li><b>Vlevo</b> je 3D pohled, pod ním lišta nástrojů.</li>
-              <li><b>Vpravo</b> je panel se záložkami Model, Strom, Hledat, Vlastnosti, BCF, Geo a Data. Skryješ ho tlačítkem s obdélníčkem v horní liště. Na telefonu vyjíždí zespodu.</li>
+              <li><b>Vlevo</b> je 3D pohled, pod ním lišta nástrojů. Když se lišta nevejde (telefon, iPad na výšku), méně používané nástroje jsou pod <b>Více</b>.</li>
+              <li>Nad lištou se objeví <b>akce</b>, když dávají smysl: pro vybraný prvek, po skrytí <b>Vše</b> a <b>Zpět</b>.</li>
+              <li><b>Vpravo</b> je panel se záložkami Model, Strom, Hledat, Vlastnosti, BCF, Geo a Data. Skryješ ho tlačítkem s obdélníčkem v horní liště.</li>
+              <li>Na telefonu a na iPadu na výšku panel vyjíždí <b>zespodu</b>. Za proužek nahoře ho povytáhneš na půl nebo na celou výšku, zmenšíš na proužek se záložkami nebo stáhneš dolů a zavřeš. Ťuknutí na proužek přepíná velikost. 3D pohled se posune nad panel, aby vybraný prvek nezmizel pod ním.</li>
               <li>V horní liště je dále <b>?</b> (tento návod) a přepínač světlého a tmavého režimu. Výchozí režim se řídí nastavením zařízení.</li>
             </ul>
             <h4>Instalace na iPad</h4>
@@ -873,8 +912,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             <p>Přiblížení míří k místu pod prsty nebo kurzorem a projde i skrz stěnu nebo řez.</p>
             <h4>Tlačítka v liště</h4>
             <dl class="help-dl">
-              <dt>Celý</dt><dd>zobrazí celý model</dd>
-              <dt>3D</dt><dd>šikmý pohled na model</dd>
+              <dt>Celý</dt><dd>zobrazí celý model ze stejného směru. Druhým stiskem (nebo po pohledu shora) přejde na výchozí šikmý 3D pohled.</dd>
               <dt>Shora</dt><dd>pohled shora</dd>
               <dt>Pod prstem / Kolem prvku / Kolem středu</dt><dd>střed otáčení, ťuknutím na tlačítko se přepíná: <b>pod prstem</b> (s myší pod kurzorem) se pohled otáčí kolem bodu modelu, kde začneš táhnout, mimo model kolem bodu na rovině pod ním; <b>kolem prvku</b> kolem vybraného prvku; <b>kolem středu</b> kolem středu obrazovky</dd>
               <dt>Hrany</dt><dd>zapne nebo vypne obrysové hrany prvků (u velkých modelů vypnutí zrychlí zobrazení)</dd>
@@ -891,12 +929,15 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             </ul>
             <h4>Záložka Vlastnosti</h4>
             <p>Atributy, GlobalId, materiál, všechny sady vlastností (Pset) a množství (Qto), včetně vlastností převzatých z typu. U prvku je i jeho poloha v mapových souřadnicích.</p>
-            <h4>Tlačítka pro vybraný prvek</h4>
+            <h4>Akce nad lištou</h4>
+            <p>Objeví se nad lištou nástrojů po výběru prvku, po skrytí nebo izolaci.</p>
             <dl class="help-dl">
               <dt>Zaměřit</dt><dd>přiblíží pohled na vybraný prvek</dd>
               <dt>Skrýt</dt><dd>skryje vybraný prvek</dd>
               <dt>Izolovat</dt><dd>nechá vidět jen vybraný prvek</dd>
               <dt>Vše</dt><dd>zruší skrytí, izolaci i filtry a ukáže zase celý model</dd>
+              <dt>Zpět</dt><dd>vrátí poslední krok: skrytí, izolaci, skrytí podlaží nebo kategorie, zapnutí či vypnutí řezu a skok pohledu (Celý, Shora, Zaměřit). S klávesnicí ⌘Z / Ctrl+Z.</dd>
+              <dt>×</dt><dd>zruší výběr</dd>
             </dl>
           </section>
 

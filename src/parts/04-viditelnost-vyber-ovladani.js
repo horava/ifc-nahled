@@ -19,6 +19,7 @@ function syncMeshVisibility() {
 }
 function applyVisibility() {
   syncMeshVisibility();
+  trackVis();
   updateToolbar();
   requestRender();
   if (S.tree && !$('#panel-tree').hidden) renderTree();
@@ -51,6 +52,7 @@ function select(id, opts = {}) {
   const inTree = !$('#panel-tree').hidden;
   if (!opts.keepPanel && !inTree) showPanel('props');
   renderProps();
+  setTimeout(ensureSelVisible, 360);
   updateRotLabel();
   if (!$('#panel-tree').hidden) renderTree(true);
   if (plan.on) markPlanDirty(60);
@@ -152,7 +154,6 @@ function orbitUi() {
   const m = S.orbitMode;
   const label = m === 'point' ? (finePointer() ? 'Pod kurzorem' : 'Pod prstem') : m === 'sel' ? 'Kolem prvku' : 'Kolem středu';
   b.querySelector('span').textContent = label;
-  b.setAttribute('aria-pressed', String(m !== 'center'));
   b.dataset.mode = m;
   b.title = m === 'point' ? 'Otáčí se kolem bodu modelu, kde začneš táhnout (ťuknutím přepneš)'
     : m === 'sel' ? 'Otáčí se kolem vybraného prvku, bez výběru kolem bodu pod prstem (ťuknutím přepneš)'
@@ -276,7 +277,6 @@ function pickCandidates(cx, cy) {
 }
 /* opakované ťuknutí na stejné místo vybere další prvek pod prstem */
 let tapCycle = null;
-let cycleHint = 0;
 function pick(cx, cy) {
   const r = renderer.domElement.getBoundingClientRect();
   if (S.data?.info) { dataIdentifyScreen(cx, cy); return; }
@@ -301,6 +301,6 @@ function pick(cx, cy) {
   tapCycle = { x: cx, y: cy, ids };
   if (ids[0] === cur) { tapCycle = null; deselect(); return; }
   selectAny(ids[0]);
-  if (ids.length > 1 && cycleHint < 2) { cycleHint++; toast('Další ťuknutí na stejné místo vybere prvek pod ním.'); }
+  if (ids.length > 1) hint('cycle', 'Další ťuknutí na stejné místo vybere prvek pod ním.');
 }
 

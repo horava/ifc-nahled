@@ -8,6 +8,8 @@ Offline prohlížeč IFC modelů pro iPad a další zařízení. Běží v prohl
 - střed otáčení podle volby v liště: bod modelu pod prstem nebo kurzorem (výchozí), vybraný prvek, nebo střed pohledu; dvojité klepnutí přesune pohled na bod modelu
 - vlastnosti prvku: atributy, GlobalId, materiál, všechny Psety a Qsety včetně vlastností typu
 - vlastnosti projektu, pozemku (RefLatitude/RefLongitude, adresa), budovy a podlaží (Elevation, výška v Bpv): klepnutím na název ve Stromu nebo na podlaží v panelu Model, u podlaží a budovy i počet a seznam místností
+- ovládání: tlačítko Celý (stejný směr, druhým stiskem výchozí 3D pohled), akce Zaměřit / Skrýt / Izolovat / Vše nad lištou jen když dávají smysl, **Zpět** pro skrytí, izolaci, filtry, řez a skoky pohledu (i ⌘Z / Ctrl+Z), méně používané nástroje pod Více, když se lišta nevejde
+- na telefonu a iPadu na výšku spodní panel s úchytem (proužek, půlka, celá výška); 3D pohled se posune nad panel
 - výběr ťuknutím dává přednost místnosti před podlahou nebo stěnou, se kterou splývá; další ťuknutí na stejné místo vybere prvek pod ní
 - strom IFC (projekt → pozemek → budova → podlaží → místnosti a prvky), filtrování podle podlaží a kategorií, skrytí a izolace prvků; prvek se ve stromu dál rozbalí na typ, vrstvy materiálu s tloušťkou, otvory s výplněmi a prostupy (skladba materiálu je i ve Vlastnostech)
 - **hledání** (záložka Hledat) v názvech, číslech místností, typech, materiálech, GlobalId a hodnotách všech sad vlastností, s **filtrem podle vlastnosti** (=, ≠, obsahuje, začíná na, >, <, je/není vyplněno); výsledky jde izolovat, zvýraznit nebo skrýt

@@ -379,6 +379,105 @@ def t_sharp(C):
     no_errors(pg)
 
 
+@test('lišta: Celý, akce u vybraného prvku a Zpět')
+def t_toolbar_undo(C):
+    pg = C.app()
+    cam = "()=>{const V=window.__ifcView;const c=V.camera.position.clone();return c.toArray()}"
+    dirj = "()=>{const V=window.__ifcView,S=window.__ifc;const t=V.controls.target;const d=V.camera.position.clone().sub(t).normalize();return d.toArray().map(v=>+v.toFixed(3))}"
+    check(pg.locator('#btn-iso').count() == 0, 'tlačítko 3D je sloučené s Celý')
+    check(pg.evaluate('()=>document.getElementById("actbar").hidden'), 'bez výběru a skrytí nejsou akce vidět')
+    b = canvas_box(pg)
+    x, y = b['x'] + b['width'] * 0.3, b['y'] + b['height'] * 0.8
+    pg.mouse.move(x, y); pg.mouse.down()
+    for i in range(8):
+        pg.mouse.move(x + i * 20, y - i * 3); pg.wait_for_timeout(20)
+    pg.mouse.up(); pg.wait_for_timeout(200)
+    d0 = pg.evaluate(dirj)
+    pg.click('#btn-fit'); pg.wait_for_timeout(700)
+    d1 = pg.evaluate(dirj)
+    check(max(abs(a - b) for a, b in zip(d0, d1)) < 0.01, f'Celý drží směr pohledu {d0} {d1}')
+    pg.click('#btn-fit'); pg.wait_for_timeout(700)
+    iso = [1, 0.8, 1.15]; n = sum(v * v for v in iso) ** 0.5; iso = [v / n for v in iso]
+    d2 = pg.evaluate(dirj)
+    check(max(abs(a - b) for a, b in zip(d2, iso)) < 0.01, f'druhý stisk Celý = výchozí 3D pohled {d2}')
+    pg.click('#btn-top'); pg.wait_for_timeout(700)
+    pg.click('#btn-fit'); pg.wait_for_timeout(700)
+    d3 = pg.evaluate(dirj)
+    check(max(abs(a - b) for a, b in zip(d3, iso)) < 0.01, f'Celý po pohledu shora = 3D pohled {d3}')
+    pg.evaluate('()=>{while(window.__ifcView.undoStack.length)window.__ifcView.undoStack.pop()}')
+    for fx, fy in [(0.5, 0.5), (0.45, 0.55), (0.55, 0.45), (0.4, 0.6)]:
+        pg.mouse.click(b['x'] + b['width'] * fx, b['y'] + b['height'] * fy); pg.wait_for_timeout(400)
+        if pg.evaluate('()=>window.__ifc.selected'):
+            break
+    check(pg.locator('#btn-hide').is_visible() and pg.locator('#btn-isolate').is_visible(), 'po výběru jsou vidět akce Skrýt a Izolovat')
+    check(not pg.locator('#btn-undo').is_visible(), 'Zpět je vidět, až když je co vracet')
+    pg.click('#btn-hide'); pg.wait_for_timeout(300)
+    check(pg.evaluate('()=>window.__ifc.hidden.size') == 1 and pg.locator('#btn-undo').is_visible(), 'skrytí a nabídka Zpět')
+    pg.click('#btn-undo'); pg.wait_for_timeout(300)
+    check(pg.evaluate('()=>window.__ifc.hidden.size') == 0, 'Zpět vrátí skrytý prvek')
+    pg.mouse.click(b['x'] + b['width'] * 0.5, b['y'] + b['height'] * 0.5); pg.wait_for_timeout(400)
+    if not pg.evaluate('()=>window.__ifc.selected'):
+        pg.mouse.click(b['x'] + b['width'] * 0.45, b['y'] + b['height'] * 0.55); pg.wait_for_timeout(400)
+    c0 = pg.evaluate(cam)
+    pg.click('#btn-isolate'); pg.wait_for_timeout(800)
+    check(pg.evaluate('()=>!!window.__ifc.isolated') and pg.evaluate(cam) != c0, 'izolace a zaměření')
+    pg.click('#btn-undo'); pg.wait_for_timeout(800)
+    c1 = pg.evaluate(cam)
+    check(pg.evaluate('()=>window.__ifc.isolated') is None and max(abs(a - b) for a, b in zip(c0, c1)) < 1e-3,
+          'izolaci i s posunem kamery vrátí jedno Zpět')
+    pg.click('#btn-clip'); pg.wait_for_timeout(300)
+    check(pg.evaluate('()=>window.__ifc.clipOn'), 'řez zapnutý')
+    pg.mouse.click(b['x'] + 5, b['y'] + 5)
+    pg.keyboard.press('Control+z'); pg.wait_for_timeout(300)
+    check(not pg.evaluate('()=>window.__ifc.clipOn'), 'Ctrl+Z vypne řez')
+    no_errors(pg)
+
+
+@test('telefon: spodní panel, Více a pohled nad panelem')
+def t_phone_sheet(C):
+    pg = C.app(device=C.pw.devices['iPhone 13'])
+    app_open = '()=>document.getElementById("app").classList.contains("sheet-open")'
+    check(not pg.evaluate(app_open), 'na telefonu je panel na začátku zavřený')
+    check(pg.locator('#btn-more').is_visible() and not pg.locator('.toolbar #btn-coord').count(), 'méně používané nástroje jsou pod Více')
+    pg.tap('#btn-more'); pg.wait_for_timeout(200)
+    check(pg.locator('#more-pop #btn-coord').is_visible(), 'Více ukáže Souřadnice')
+    pg.tap('#more-pop #btn-edges'); pg.wait_for_timeout(400)
+    check(pg.evaluate('()=>document.getElementById("more-pop").hidden') and not pg.evaluate('()=>window.__ifc.edges'), 'nástroj z Více funguje a nabídka se zavře')
+    box = canvas_box(pg)
+    for fx, fy in [(0.4, 0.55), (0.5, 0.5), (0.6, 0.45)]:
+        pg.touchscreen.tap(box['x'] + box['width'] * fx, box['y'] + box['height'] * fy); pg.wait_for_timeout(900)
+        if pg.evaluate('()=>window.__ifc.selected'):
+            break
+    check(pg.evaluate('()=>window.__ifc.selected') and pg.evaluate(app_open), 'výběr otevře spodní panel')
+    geo = """()=>{const r=(s)=>document.querySelector(s).getBoundingClientRect();const V=window.__ifcView;
+      return {cover:parseFloat(getComputedStyle(document.getElementById('app')).getPropertyValue('--sheet-cover'))||0,
+        off:V.camera.view&&V.camera.view.enabled?V.camera.view.offsetY:0, tb:r('.toolbar').bottom, pt:r('.panel').top,
+        scroll:document.scrollingElement.scrollTop}}"""
+    g = pg.evaluate(geo)
+    check(g['cover'] > 100 and abs(g['off'] - g['cover'] / 2) < 2, f'pohled se posune nad panel {g}')
+    check(g['tb'] <= g['pt'] + 1 and g['scroll'] == 0, f'lišta je nad panelem a stránka se neposunula {g}')
+    gb = pg.locator('#sheet-grab').bounding_box()
+    gx, gy = gb['x'] + gb['width'] / 2, gb['y'] + gb['height'] / 2
+    pg.mouse.move(gx, gy); pg.mouse.down()
+    for i in range(1, 9):
+        pg.mouse.move(gx, gy - i * 40); pg.wait_for_timeout(30)
+    pg.mouse.up(); pg.wait_for_timeout(500)
+    g = pg.evaluate(geo)
+    check(g['pt'] < 140 and g['cover'] == 0 and g['off'] == 0, f'vytažení nahoru = celá výška {g}')
+    gb = pg.locator('#sheet-grab').bounding_box()
+    pg.mouse.click(gb['x'] + gb['width'] / 2, gb['y'] + gb['height'] / 2); pg.wait_for_timeout(500)
+    g = pg.evaluate(geo)
+    check(g['cover'] > 0 and g['cover'] < 200, f'ťuknutí na úchyt přepne na proužek {g}')
+    gb = pg.locator('#sheet-grab').bounding_box()
+    gx, gy = gb['x'] + gb['width'] / 2, gb['y'] + gb['height'] / 2
+    pg.mouse.move(gx, gy); pg.mouse.down()
+    for i in range(1, 6):
+        pg.mouse.move(gx, gy + i * 30); pg.wait_for_timeout(30)
+    pg.mouse.up(); pg.wait_for_timeout(500)
+    check(not pg.evaluate(app_open) and pg.evaluate(geo)['off'] == 0, 'stažení dolů panel zavře')
+    no_errors(pg)
+
+
 @test('velký model: sloučené kreslení a paměť', big=True)
 def t_big(C):
     huge = generate('mkhuge.py', 'huge65.ifc', 8600)

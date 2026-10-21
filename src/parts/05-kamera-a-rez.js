@@ -5,7 +5,10 @@ function fitView(mode = 'keep', animate = true) {
   const size = box.getSize(new THREE.Vector3());
   const radius = Math.max(size.length() / 2, 0.5);
   const fov = THREE.MathUtils.degToRad(camera.fov);
-  const dist = radius / Math.sin(Math.min(fov, fov * camera.aspect) / 2) * 1.05;
+  // pod spodním panelem část pohledu není vidět – model se vejde do nezakryté části
+  const vis = sheet.cover ? Math.max(0.25, 1 - sheet.cover / (viewport.clientHeight || 1)) : 1;
+  const fovV = 2 * Math.atan(Math.tan(fov / 2) * vis), fovH = 2 * Math.atan(Math.tan(fov / 2) * camera.aspect);
+  const dist = radius / Math.sin(Math.min(fovV, fovH) / 2) * 1.05;
   let dir;
   if (mode && mode.isVector3) dir = mode.clone();
   else if (mode === 'top') dir = new THREE.Vector3(0, 1, 0.0001);
@@ -18,10 +21,12 @@ function fitView(mode = 'keep', animate = true) {
   camera.far = dist * 50;
   camera.updateProjectionMatrix();
   tween(to, center, animate);
+  return { pos: to, target: center };
 }
 let tweenId = 0;
 function tween(pos, target, animate) {
   const id = ++tweenId;
+  trackCam();
   const p0 = camera.position.clone(), t0 = controls.target.clone();
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!animate || reduce) { camera.position.copy(pos); controls.target.copy(target); controls.update(); requestRender(); return; }
@@ -266,7 +271,9 @@ function updateClipUi() {
   requestRender();
 }
 function toggleClip(force) {
+  const wasOn = S.clipOn;
   S.clipOn = force ?? !S.clipOn;
+  trackClip(wasOn);
   if (!S.clipOn) plan.autoClip = false;
   if (S.clipOn) { S.clipPanel = true; applyClipMode(); }
   updateClipUi();

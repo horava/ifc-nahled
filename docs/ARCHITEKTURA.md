@@ -20,13 +20,13 @@ spuštění – nová část patří tam, kde jsou definované věci, které př
 | 04-viditelnost-vyber-ovladani | výběr, ovládání dotykem / myší, otáčení kolem bodu, dvojité ťuknutí, výběr ťuknutím |
 | 05-kamera-a-rez | pohledy (Celý, 3D, Shora), řezy |
 | 06-mereni-a-prichytavani | přichytávání, měření s trojúhelníkem, nabídka při najetí |
-| 07-lista-panel-napoveda-pruvodce | lišta nástrojů, panel Model, návod, průvodce |
+| 07-lista-panel-napoveda-pruvodce | lišta nástrojů (Celý, akce nad lištou, Více), Zpět, panel Model, návod, průvodce |
 | 08-vlastnosti | panel Vlastnosti |
 | 09-pudorys | půdorys na rozdělené obrazovce |
 | 10-georeference-souradnice-kompas | IfcMapConversion, panel Geo, nástroj Souřadnice, kompas |
 | 11-strom | strom IFC, podrobnosti prvku (typ, vrstvy, otvory) |
 | 12-bcf | BCF 2.1 |
-| 13-panely-nacitani-soubory | přepínání panelů, načítací obrazovka, otevření souboru |
+| 13-panely-nacitani-soubory | přepínání panelů, spodní panel (úchyt, výšky, posun pohledu), hlášky a nápovědy, otevření souboru |
 | 14-index-vlastnosti | index vlastností pro hledání, barvení a porovnání |
 | 15-hledani … 19-export-excel | hledání, barvení, popisky místností, porovnání verzí, Excel |
 | 20–23 data | mapové služby, terén (LERC), 3D budovy (I3S), info o místě, panel Data, citace, ostrý detail |
@@ -41,6 +41,10 @@ spuštění – nová část patří tam, kde jsou definované věci, které př
   porovnání) se kreslí samostatně. Kód, který mění viditelnost nebo materiál prvků, nemusí o blocích vědět –
   `bigSync()` před každým snímkem srovná stav.
 - **Načítání:** během `loadIfc` je `S.loading`; index vlastností a vazby počkají na `S.loadWait`.
+- **Zpět:** změny viditelnosti zachytí `applyVisibility()` (porovná stav s předchozím), skoky kamery `tween()`, řez `toggleClip()`.
+  Co se stane během ~0,1 s, je jeden krok. Nový kód, který mění viditelnost přes `applyVisibility()`, je tím pokrytý sám.
+- **Spodní panel:** zakrytá část 3D pohledu je v `--sheet-cover`; kamera má `setViewOffset` (střed kreslení nad panelem),
+  `fitView` počítá jen s nezakrytou částí. Raycasting a promítání bodů s posunem počítají samy (projekční matice).
 - **Soukromí:** model se nikam neposílá; ze zařízení odcházejí jen požadavky na mapové služby (výřez okolí).
 - **Úložiště:** klíče `ifc-nahled-*` v localStorage, IndexedDB `ifc-nahled` (BCF) a `ifc-nahled-models`
   (nedávné modely). Názvy neměnit – jinak uživatelé přijdou o uložená data.

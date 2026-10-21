@@ -3,7 +3,7 @@
 Automatické testy projdou aplikaci v prohlížeči Chromium bez okna (Playwright) a kontrolují hlavní funkce:
 ukázku a průvodce, výběr ťuknutím, dvojité ťuknutí a otáčení, měření s přichytáváním, strom s podrobnostmi prvků,
 porovnání verzí, více modelů, barvení místností a hledání, mapové služby (ArcGIS, WMS 1.1.1 i 1.3.0, terén,
-3D budovy, citace zdrojů, ostrý detail) a volitelně velký model.
+3D budovy, citace zdrojů, ostrý detail), lištu nástrojů se Zpět, spodní panel na telefonu a volitelně velký model.
 
 ## Spuštění
 

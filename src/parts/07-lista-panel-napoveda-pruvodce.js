@@ -1,17 +1,33 @@
 /* ---------- toolbar ---------- */
+function anyFilterOn() {
+  return !!(S.hidden.size || S.isolated || [...S.classes.entries()].some(([k, c]) => !c.visible && !HIDDEN_BY_DEFAULT.has(U(k))) || S.storeys.some((s) => !s.visible));
+}
 function updateToolbar() {
   const has = S.selected != null;
-  $('#btn-hide').disabled = !has;
-  $('#btn-isolate').disabled = !has;
-  $('#btn-focus').disabled = !has;
-  const anyFilter = S.hidden.size || S.isolated || [...S.classes.entries()].some(([k, c]) => !c.visible && !HIDDEN_BY_DEFAULT.has(U(k))) || S.storeys.some((s) => !s.visible);
-  $('#btn-showall').disabled = !anyFilter;
+  const filt = anyFilterOn();
+  const canUndo = undoStack.length > 0;
+  $('#btn-hide').hidden = !has;
+  $('#btn-isolate').hidden = !has;
+  $('#btn-focus').hidden = !has;
+  $('#btn-desel').hidden = !has;
+  $('#btn-showall').hidden = !filt;
+  $('#btn-undo').hidden = !canUndo;
+  $('#act-sep').hidden = !(canUndo && (has || filt));
+  // při měření a odečítání souřadnic má přednost jejich lišta
+  $('#actbar').hidden = !(has || filt || canUndo) || S.measure.on || coord.on;
   $('#btn-clip').setAttribute('aria-pressed', String(S.clipOn));
   $('#btn-measure').setAttribute('aria-pressed', String(S.measure.on));
   $('#btn-edges').setAttribute('aria-pressed', String(S.edges));
 }
-$('#btn-fit').addEventListener('click', () => fitView('keep'));
-$('#btn-iso').addEventListener('click', () => fitView('iso'));
+/* Celý: celý model ze současného směru; shora / zespodu nebo při druhém stisku z výchozího 3D pohledu */
+let fitSnap = null;
+$('#btn-fit').addEventListener('click', () => {
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  const tol = Math.max(camera.position.distanceTo(controls.target) * 0.002, 1e-4);
+  const again = fitSnap && camera.position.distanceTo(fitSnap.pos) < tol && controls.target.distanceTo(fitSnap.target) < tol;
+  const steep = Math.abs(dir.y) > 0.97 || dir.y < -0.05;
+  fitSnap = fitView(again || steep ? 'iso' : 'keep');
+});
 $('#btn-top').addEventListener('click', () => fitView('top'));
 $('#btn-clip').addEventListener('click', () => toggleClip());
 $('#btn-measure').addEventListener('click', () => toggleMeasure());
@@ -39,6 +55,8 @@ $('#btn-isolate').addEventListener('click', () => {
 });
 $('#btn-focus').addEventListener('click', focusSelected);
 $('#btn-showall').addEventListener('click', showAll);
+$('#btn-desel').addEventListener('click', () => deselect());
+$('#btn-undo').addEventListener('click', undo);
 function showAll() {
   S.hidden.clear(); S.isolated = null;
   if (S.color) { S.color.only = null; renderLegend(); }
@@ -47,6 +65,92 @@ function showAll() {
   S.classes.forEach((c, k) => { c.visible = !HIDDEN_BY_DEFAULT.has(U(k)); });
   applyVisibility(); renderModelPanel();
 }
+
+/* Více: když se lišta nevejde (telefon, iPad na výšku, půdorys vedle), méně používané nástroje jdou do vyskakovací řady */
+const toolbarEl = $('.toolbar'), morePop = $('#more-pop'), moreBtn = $('#btn-more');
+const optTools = [...toolbarEl.querySelectorAll('.tool.opt')].map((b) => {
+  const slot = document.createComment('slot');
+  b.before(slot);
+  return { b, slot };
+});
+function setMoreOpen(open) {
+  morePop.hidden = !open;
+  moreBtn.setAttribute('aria-expanded', String(open));
+}
+function layoutToolbar() {
+  setMoreOpen(false);
+  optTools.forEach(({ b, slot }) => { if (b.parentElement !== toolbarEl) slot.after(b); });
+  moreBtn.hidden = true;
+  if (toolbarEl.scrollWidth <= toolbarEl.clientWidth + 1) return;
+  optTools.forEach(({ b }) => morePop.appendChild(b));
+  moreBtn.hidden = false;
+}
+moreBtn.addEventListener('click', (e) => { e.stopPropagation(); setMoreOpen(morePop.hidden); });
+morePop.addEventListener('click', (e) => { if (e.target.closest('.tool')) setTimeout(() => setMoreOpen(false), 120); });
+document.addEventListener('pointerdown', (e) => { if (!morePop.hidden && !e.target.closest('#more-pop, #btn-more')) setMoreOpen(false); });
+new ResizeObserver(() => layoutToolbar()).observe($('#pane3d'));
+document.fonts?.ready?.then(layoutToolbar);
+
+/* ---------- Zpět: skrytí, izolace, filtry podlaží a kategorií, řez a skoky kamery ---------- */
+let undoMute = false, visKey = null, visState = null;
+function visSnapshot() {
+  return {
+    hidden: [...S.hidden], isolated: S.isolated ? [...S.isolated] : null,
+    storeys: S.storeys.map((s) => [s.id, s.visible]), classes: [...S.classes].map(([k, c]) => [k, c.visible]),
+  };
+}
+function pushUndo(part) {
+  if (undoMute || S.loading) return;
+  const now = performance.now();
+  const top = undoStack[undoStack.length - 1];
+  // jedna akce = jeden krok (izolace mění viditelnost i kameru)
+  if (top && now - top.t < 120) { for (const k of Object.keys(part)) if (!(k in top)) top[k] = part[k]; }
+  else { undoStack.push({ t: now, ...part }); if (undoStack.length > 40) undoStack.shift(); }
+  updateToolbar();
+}
+/* volá se z applyVisibility: když se viditelnost změnila, uloží předchozí stav */
+function trackVis() {
+  if (undoMute || S.loading) return;
+  const v = visSnapshot(), k = JSON.stringify(v);
+  if (visKey != null && k !== visKey) pushUndo({ vis: visState });
+  visKey = k; visState = v;
+}
+function trackCam() {
+  pushUndo({ cam: { pos: camera.position.clone(), target: controls.target.clone() } });
+}
+function trackClip(wasOn) { if (wasOn !== S.clipOn) pushUndo({ clip: wasOn }); }
+function resetUndo() {
+  undoStack.length = 0;
+  visState = visSnapshot(); visKey = JSON.stringify(visState);
+  updateToolbar();
+}
+function undo() {
+  const e = undoStack.pop();
+  if (!e) return;
+  undoMute = true;
+  try {
+    if (e.vis) {
+      const v = e.vis;
+      S.hidden.clear(); v.hidden.forEach((id) => S.hidden.add(id));
+      S.isolated = v.isolated ? new Set(v.isolated) : null;
+      const sm = new Map(v.storeys), cm = new Map(v.classes);
+      S.storeys.forEach((s) => { if (sm.has(s.id)) s.visible = sm.get(s.id); });
+      S.classes.forEach((c, k) => { if (cm.has(k)) c.visible = cm.get(k); });
+      if (S.selected != null && !isVisible(S.selected, S.elements.get(S.selected))) deselect(false);
+      applyVisibility(); renderModelPanel(); renderProps();
+      visState = visSnapshot(); visKey = JSON.stringify(visState);
+    }
+    if ('clip' in e) toggleClip(e.clip);
+    if (e.cam) tween(e.cam.pos, e.cam.target, true);
+  } finally { undoMute = false; }
+  updateToolbar();
+}
+document.addEventListener('keydown', (e) => {
+  if (!(e.key === 'z' || e.key === 'Z') || !(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return;
+  if (e.target.closest?.('input, textarea, select, [contenteditable="true"]')) return;
+  e.preventDefault();
+  undo();
+});
 
 /* ---------- panel: model ---------- */
 const EYE = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -139,11 +243,11 @@ const TOUR = [
   { target: '#viewport', pad: -10, title: 'Ovládání 3D pohledu',
     html: '<ul><li><b>Jeden prst</b> otáčí, <b>dva prsty</b> posouvají a přibližují.</li><li><b>Ťuknutí</b> vybere prvek, další ťuknutí na stejné místo vybere prvek pod ním.</li><li><b>Dvojité ťuknutí</b> nastaví střed otáčení.</li><li>Myš: levé tlačítko otáčí, pravé posouvá, kolečko přibližuje.</li></ul>' },
   { target: '.toolbar', title: 'Nástroje',
-    html: '<p>Pohledy <b>Celý</b>, <b>3D</b> a <b>Shora</b>, dále <b>Řez</b>, <b>Měřit</b> s přichytáváním k lomovým bodům, <b>Souřadnice</b> bodů a <b>Půdorys</b> podlaží.</p><p>Vpravo jsou akce pro vybraný prvek: zaměřit, skrýt, izolovat a znovu zobrazit vše.</p>' },
+    html: '<p><b>Celý</b> ukáže celý model (druhým stiskem z výchozího 3D pohledu), <b>Shora</b> pohled shora, dále <b>Řez</b>, <b>Měřit</b> s přichytáváním k lomovým bodům a <b>Půdorys</b> podlaží. Co se nevejde, je pod <b>Více</b>.</p><p>Po výběru prvku se nad lištou objeví <b>Zaměřit</b>, <b>Skrýt</b> a <b>Izolovat</b>, po skrytí <b>Vše</b> a <b>Zpět</b>.</p>' },
   { target: '.panel .tabs', title: 'Panel s informacemi',
     html: '<ul><li><b>Model</b>: podlaží, místnosti, barvení, další modely a exporty</li><li><b>Strom</b> a <b>Hledat</b>: struktura a vyhledávání ve vlastnostech</li><li><b>Vlastnosti</b> vybraného prvku</li><li><b>BCF</b> záznamy, <b>Geo</b> georeference a <b>Data</b> s mapovými podklady</li></ul>' },
   { target: '#btn-sheet', title: 'Skrytí panelu',
-    html: '<p>Tímto tlačítkem panel schováš nebo zase ukážeš. Na telefonu vysouvá panel zespodu.</p><p>Vedle je přepínač světlého a tmavého režimu.</p>' },
+    html: '<p>Tímto tlačítkem panel schováš nebo zase ukážeš. Na telefonu a na iPadu na výšku vyjíždí zespodu: za proužek nahoře ho povytáhneš, zmenšíš nebo stáhneš dolů.</p><p>Vedle je přepínač světlého a tmavého režimu.</p>' },
   { target: '#btn-help', title: 'Návod je vždy po ruce',
     html: '<p>Pod otazníkem je podrobný návod ke všem funkcím, informace o aplikaci a licence. Odtud můžeš tohoto průvodce spustit znovu.</p>',
     next: 'Začít' },
