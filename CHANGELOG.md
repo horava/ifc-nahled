@@ -5,6 +5,7 @@
 ## v45 – pohodlnější ovládání
 - Tlačítka Celý a 3D sloučená: Celý drží směr pohledu, druhým stiskem (nebo po pohledu shora) přejde na výchozí 3D pohled.
 - Zaměřit, Skrýt, Izolovat a Vše jsou v malé liště nad nástroji a objeví se, jen když dávají smysl (výběr, skryté prvky); křížek zruší výběr.
+  Jsou v jedné řadě se štítkem řezu; na úzké obrazovce jen ikony. Rozbalený panel vodorovného řezu se po výběru prvku sbalí na štítek.
 - Zpět: vrátí skrytí, izolaci, skrytí podlaží a kategorií, zapnutí řezu a skoky pohledu (Celý, Shora, Zaměřit); ⌘Z / Ctrl+Z.
 - Když se lišta nevejde, režim otáčení, Hrany a Souřadnice jsou pod Více. Režim otáčení už nesvítí jako zapnutý nástroj.
 - Spodní panel na telefonu a na iPadu na výšku: úchyt, tři výšky (proužek, půlka, celá), tažení i ťuknutí, stažením se zavře. Lišta a akce jsou nad panelem, 3D pohled se posune nad panel a vybraný prvek se neschová pod něj.

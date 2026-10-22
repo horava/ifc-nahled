@@ -53,6 +53,9 @@ function select(id, opts = {}) {
   if (!opts.keepPanel && !inTree) showPanel('props');
   renderProps();
   setTimeout(ensureSelVisible, 360);
+  // rozbalený panel vodorovného řezu by s akcemi pro prvek zakryl velkou část pohledu – sbalit na štítek
+  // (u svislých řezů zůstane kvůli tlačítku ⟂ Prvek)
+  if (S.clipOn && S.clipPanel && clip.mode === 'h') { S.clipPanel = false; updateClipUi(); }
   updateRotLabel();
   if (!$('#panel-tree').hidden) renderTree(true);
   if (plan.on) markPlanDirty(60);
