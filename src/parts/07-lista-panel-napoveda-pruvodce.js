@@ -11,10 +11,9 @@ function updateToolbar() {
   $('#btn-focus').hidden = !has;
   $('#btn-desel').hidden = !has;
   $('#btn-showall').hidden = !filt;
-  $('#btn-undo').hidden = !canUndo;
-  $('#act-sep').hidden = !(canUndo && (has || filt));
-  // při měření a odečítání souřadnic má přednost jejich lišta
-  $('#actbar').hidden = !(has || filt || canUndo) || S.measure.on || coord.on;
+  $('#btn-undo').disabled = !canUndo;
+  // při měření, odečítání souřadnic a nastavování řezu mají přednost jejich panely
+  $('#actbar').hidden = !(has || filt) || S.measure.on || coord.on || (S.clipOn && S.clipPanel);
   $('#btn-clip').setAttribute('aria-pressed', String(S.clipOn));
   $('#btn-measure').setAttribute('aria-pressed', String(S.measure.on));
   $('#btn-edges').setAttribute('aria-pressed', String(S.edges));
@@ -243,7 +242,7 @@ const TOUR = [
   { target: '#viewport', pad: -10, title: 'Ovládání 3D pohledu',
     html: '<ul><li><b>Jeden prst</b> otáčí, <b>dva prsty</b> posouvají a přibližují.</li><li><b>Ťuknutí</b> vybere prvek, další ťuknutí na stejné místo vybere prvek pod ním.</li><li><b>Dvojité ťuknutí</b> nastaví střed otáčení.</li><li>Myš: levé tlačítko otáčí, pravé posouvá, kolečko přibližuje.</li></ul>' },
   { target: '.toolbar', title: 'Nástroje',
-    html: '<p><b>Celý</b> ukáže celý model (druhým stiskem z výchozího 3D pohledu), <b>Shora</b> pohled shora, dále <b>Řez</b>, <b>Měřit</b> s přichytáváním k lomovým bodům a <b>Půdorys</b> podlaží. Co se nevejde, je pod <b>Více</b>.</p><p>Po výběru prvku se nad lištou objeví <b>Zaměřit</b>, <b>Skrýt</b> a <b>Izolovat</b>, po skrytí <b>Vše</b> a <b>Zpět</b>.</p>' },
+    html: '<p><b>Zpět</b> vrátí poslední krok, <b>Celý</b> ukáže celý model (druhým stiskem z výchozího 3D pohledu), dále <b>Řez</b>, <b>Měřit</b> s přichytáváním k lomovým bodům a <b>Půdorys</b> podlaží. Co se nevejde, je pod <b>Více</b>.</p><p>Po výběru prvku se nad lištou objeví <b>Zaměřit</b>, <b>Skrýt</b> a <b>Izolovat</b>, po skrytí <b>Vše</b>.</p>' },
   { target: '.panel .tabs', title: 'Panel s informacemi',
     html: '<ul><li><b>Model</b>: podlaží, místnosti, barvení, další modely a exporty</li><li><b>Strom</b> a <b>Hledat</b>: struktura a vyhledávání ve vlastnostech</li><li><b>Vlastnosti</b> vybraného prvku</li><li><b>BCF</b> záznamy, <b>Geo</b> georeference a <b>Data</b> s mapovými podklady</li></ul>' },
   { target: '#btn-sheet', title: 'Skrytí panelu',

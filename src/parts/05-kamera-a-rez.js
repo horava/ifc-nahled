@@ -267,6 +267,7 @@ function viewSection() {
 function updateClipUi() {
   $('#clip-pop').hidden = !(S.clipOn && S.clipPanel);
   $('#clip-mini').hidden = !(S.clipOn && !S.clipPanel);
+  updateToolbar();
   updateClipOutline();
   requestRender();
 }

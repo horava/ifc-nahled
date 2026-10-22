@@ -410,9 +410,9 @@ def t_toolbar_undo(C):
         if pg.evaluate('()=>window.__ifc.selected'):
             break
     check(pg.locator('#btn-hide').is_visible() and pg.locator('#btn-isolate').is_visible(), 'po výběru jsou vidět akce Skrýt a Izolovat')
-    check(not pg.locator('#btn-undo').is_visible(), 'Zpět je vidět, až když je co vracet')
+    check(pg.locator('#btn-undo').is_disabled(), 'Zpět je aktivní, až když je co vracet')
     pg.click('#btn-hide'); pg.wait_for_timeout(300)
-    check(pg.evaluate('()=>window.__ifc.hidden.size') == 1 and pg.locator('#btn-undo').is_visible(), 'skrytí a nabídka Zpět')
+    check(pg.evaluate('()=>window.__ifc.hidden.size') == 1 and pg.locator('#btn-undo').is_enabled(), 'skrytí a nabídka Zpět')
     pg.click('#btn-undo'); pg.wait_for_timeout(300)
     check(pg.evaluate('()=>window.__ifc.hidden.size') == 0, 'Zpět vrátí skrytý prvek')
     pg.mouse.click(b['x'] + b['width'] * 0.5, b['y'] + b['height'] * 0.5); pg.wait_for_timeout(400)
@@ -427,6 +427,7 @@ def t_toolbar_undo(C):
           'izolaci i s posunem kamery vrátí jedno Zpět')
     pg.click('#btn-clip'); pg.wait_for_timeout(300)
     check(pg.evaluate('()=>window.__ifc.clipOn'), 'řez zapnutý')
+    check(pg.evaluate('()=>window.__ifc.selected') and pg.locator('#clip-pop').is_visible() and not pg.locator('#actbar').is_visible(), 'při rozbaleném panelu řezu jsou akce schované')
     pg.mouse.click(b['x'] + 5, b['y'] + 5)
     pg.keyboard.press('Control+z'); pg.wait_for_timeout(300)
     check(not pg.evaluate('()=>window.__ifc.clipOn'), 'Ctrl+Z vypne řez')
