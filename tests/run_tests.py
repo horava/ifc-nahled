@@ -479,6 +479,24 @@ def t_phone_sheet(C):
     no_errors(pg)
 
 
+@test('geo: lokální počátek ve 3D a v půdorysu')
+def t_origin(C):
+    pg = C.app()
+    pg.click('[data-tab="geo"]'); pg.wait_for_timeout(300)
+    pg.click('#panel-geo button:has-text("Ukázat v modelu")'); pg.wait_for_timeout(500)
+    lab = pg.locator('.origin-label')
+    check(lab.is_visible() and 'E -598' in lab.inner_text().replace('\u00a0', ' ').replace('\u202f', ' '), f'popisek počátku s E/N: {lab.inner_text()!r}')
+    check(pg.locator('.origin-ax').count() == 3, 'tři popisky os')
+    pg.click('#panel-geo button:has-text("Zaměřit")'); pg.wait_for_timeout(800)
+    pos = pg.evaluate('()=>{const r=document.querySelector(".origin-label").getBoundingClientRect(),c=document.querySelector("#viewport canvas").getBoundingClientRect();return [r.left-c.left,r.top-c.top,c.width,c.height]}')
+    check(0 < pos[0] < pos[2] and 0 < pos[1] < pos[3], f'po Zaměřit je počátek v pohledu {pos}')
+    pg.click('#btn-plan'); pg.wait_for_timeout(1500)
+    check('0, 0, 0' in pg.inner_html('#plan-svg'), 'počátek v půdorysu')
+    pg.reload(); pg.wait_for_function(READY, timeout=60000); pg.wait_for_timeout(600)
+    check(pg.locator('.origin-label').is_visible(), 'volba se pamatuje')
+    no_errors(pg)
+
+
 @test('velký model: sloučené kreslení a paměť', big=True)
 def t_big(C):
     huge = generate('mkhuge.py', 'huge65.ifc', 8600)

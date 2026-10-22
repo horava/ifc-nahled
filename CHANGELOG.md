@@ -2,6 +2,11 @@
 
 Číslo verze odpovídá `VERSION` v `sw.js` (`ifc-nahled-vNN`) a zobrazuje se v návodu v kapitole O aplikaci.
 
+## v48
+- Lokální počátek (0, 0, 0) v modelu: v záložce Geo tlačítka Ukázat v modelu a Zaměřit. Ve 3D osy x / y / z se stálou
+  velikostí na obrazovce a popisek s mapovými souřadnicemi počátku (E/N nebo Y/X, H), v půdorysu osy x a y.
+  Počátek mimo stavbu ukáže svou vzdálenost od modelu. Volba se pamatuje.
+
 ## v47
 - Číslo verze v horní liště vedle názvu (ťuknutím se otevře O aplikaci, kde je i otisk sestavení).
   Číslo se při sestavení bere z `VERSION` v `sw.js`.
@@ -24,7 +29,7 @@
 - Hlášky menší a dole nad lištou; nápověda k opakovanému ťuknutí jen prvních pár použití.
 - Na malé obrazovce z odznaku ukázky jen štítek; úspornější lišty na telefonu naležato.
 - Oprava: přepnutí záložky panelu nebo zvýraznění ve stromu mohlo na telefonu posunout celou stránku.
-- Testy: 15 (nově lišta a Zpět, spodní panel na telefonu).
+- Testy: 15 (nově lišta a Zpět, spodní panel na telefonu); od v48 16 (lokální počátek).
 
 ## v44 – údržba
 - Zdrojový kód rozdělený na 27 tematických částí v `src/parts/` (sestavení dává stejný `app.js`).

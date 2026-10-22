@@ -22,7 +22,7 @@ body { margin: 0; }
 </style>
 </head>
 <body>
-<meta name="app-build" content="9622806089ff">
+<meta name="app-build" content="b0a23b98acb7">
 <script>try { var t = localStorage.getItem('ifc-nahled-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
 <style>
 /* Layout: one-screen app — header row, then 3D stage + side panel (bottom sheet on phones). Concrete-grey neutrals, site-orange for selection and actions. */
@@ -124,7 +124,7 @@ button { font: inherit; color: inherit; }
 /* toolbar */
 .toolbar { position: absolute; left: 0; right: 0; margin: 0 auto; width: max-content; box-sizing: border-box; bottom: calc(12px + var(--sheet-cover, 0px)); display: flex; align-items: stretch; gap: 2px;
   padding: 6px; border-radius: 14px; background: var(--glass); border: 1px solid var(--line);
-  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; }
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); max-width: calc(100% - 24px); overflow-x: auto; scrollbar-width: none; z-index: 4; }
 .toolbar::-webkit-scrollbar { display: none; }
 .tool { flex: none; display: grid; justify-items: center; align-content: center; gap: 2px; min-width: 50px; height: 52px; padding: 0 4px;
   border: 0; border-radius: 10px; background: transparent; cursor: pointer; color: var(--ink); }
@@ -434,6 +434,17 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
 .pts-bar { position: static; border-bottom: 0; }
 .mono-num { font-family: var(--f-mono); font-size: 13.5px; font-variant-numeric: tabular-nums; }
 .gdot { background: var(--info); }
+.origin-label { position: absolute; display: grid; gap: 1px; padding: 4px 8px; border-radius: 7px; background: var(--ink); color: var(--panel);
+  font-family: var(--f-mono); font-size: 11.5px; line-height: 1.35; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+.origin-label b { font-family: var(--f-body); font-size: 12px; }
+.origin-ax { position: absolute; transform: translate(-50%, -50%); font-family: var(--f-mono); font-size: 12px; font-weight: 700; pointer-events: none;
+  paint-order: stroke; text-shadow: 0 0 3px var(--panel), 0 0 3px var(--panel); }
+.origin-x { color: #e5484d; } .origin-y { color: #2f9e5b; } .origin-z { color: #3b82d6; }
+.po-x { stroke: #e5484d; stroke-width: 2.5; } .po-y { stroke: #2f9e5b; stroke-width: 2.5; }
+.po-dot { fill: var(--ink); stroke: var(--panel); stroke-width: 2; }
+.po-tx { fill: #e5484d; font: 700 12px var(--f-mono); } .po-ty { fill: #2f9e5b; font: 700 12px var(--f-mono); }
+.tog-txt[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.origin-dist { align-self: center; }
 .glabel { position: absolute; padding: 1px 6px; border-radius: 5px; background: var(--info); color: #fff; font-family: var(--f-mono); font-size: 11px; font-weight: 600; pointer-events: none; }
 .pg-dot { fill: var(--info); stroke: var(--panel); stroke-width: 2; }
 .pg-txt { fill: var(--info); font: 600 11px var(--f-mono); paint-order: stroke; stroke: var(--panel); stroke-width: 3px; }
@@ -1030,6 +1041,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
               <li>Ukazuje souřadnicový systém, posun, natočení a měřítko a <b>kontroly</b>: jednotky, znaménka a rozsah S-JTSK, shodu s polohou pozemku (RefLatitude/RefLongitude) a se severem projektu.</li>
               <li>Když chybí jednotka mapy, aplikace ji odvodí z měřítka. Nesoulad jednotek jde jedním ťuknutím opravit (jen pro zobrazení, soubor se nemění).</li>
               <li>S-JTSK lze zobrazovat jako E/N podle EPSG:5514 (záporné, jako v GIS) nebo jako kladné Y/X.</li>
+              <li><b>Počátek projektu (0, 0, 0)</b>: tlačítkem <b>Ukázat v modelu</b> se ve 3D i v půdorysu zobrazí lokální osy x (červená), y (zelená) a z (modrá) s mapovými souřadnicemi počátku. <b>Zaměřit</b> k počátku přiblíží pohled. U počátku mimo stavbu se ukáže jeho vzdálenost od modelu.</li>
               <li>Zeměpisná poloha (WGS84) a odkazy na Mapy.cz a Google Maps. Odkaz předá polohu, jen když na něj klikneš.</li>
               <li>Oranžová tečka u záložky Geo upozorňuje na problém v georeferenci.</li>
             </ul>

@@ -109,6 +109,8 @@ const measureMat = new LineMaterial({ linewidth: 3, depthTest: false, transparen
 const legVMat = new LineMaterial({ linewidth: 2.5, depthTest: false, transparent: true, opacity: 0.95, worldUnits: false });
 const legHMat = new LineMaterial({ linewidth: 2.5, depthTest: false, transparent: true, opacity: 0.95, worldUnits: false });
 const clipOutlineMat = new LineMaterial({ linewidth: 2, depthTest: false, transparent: true, opacity: 0.7, worldUnits: false });
+// osy lokálního počátku: x červená, y zelená, z modrá
+const originMats = [0xe5484d, 0x2f9e5b, 0x3b82d6].map((color) => new LineMaterial({ color, linewidth: 3, depthTest: false, transparent: true, worldUnits: false }));
 renderer.autoClear = false;
 
 const clipPlane = new THREE.Plane(new THREE.Vector3(0, -1, 0), 0);
@@ -203,6 +205,7 @@ function resize() {
   legHMat.resolution.set(w, h);
   selLineMat.resolution.set(w, h);
   clipOutlineMat.resolution.set(w, h);
+  originMats.forEach((m) => m.resolution.set(w, h));
   if (typeof dataGroup !== 'undefined') dataGroup.traverse((o) => { if (o.material?.resolution) o.material.resolution.set(w, h); });
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -219,6 +222,7 @@ function renderFrame() {
   renderer.render(scene, camera);
   renderer.clippingPlanes = [];
   renderer.clearDepth();
+  try { updateOriginMarker(); } catch (e) { /* model ještě není */ }
   renderer.render(measureScene, camera);
   updateOverlay();
   placeGeoOverlay();

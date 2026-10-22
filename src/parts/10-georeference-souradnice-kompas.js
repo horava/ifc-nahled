@@ -403,6 +403,7 @@ function renderGeoInner() {
       w && ['WGS84', `${nf6.format(w.lat)}° N, ${nf6.format(w.lon)}° E`, true],
     ]);
     if (w) sec.appendChild(mapLinks(w));
+    sec.appendChild(originSection());
     root.appendChild(sec);
     const m = g.mc, th = Math.atan2(m.xo, m.xa) * 180 / Math.PI;
     root.appendChild(geoTable(m.entity, [
@@ -427,6 +428,11 @@ function renderGeoInner() {
       ex && ['Konvergence poledníků', `${nfAng.format(ex.conv)}°`],
       ex && ['TrueNorth podle MapConversion', `${nfAng.format(angDeg(ex.lx, ex.ly))}°`],
     ]));
+  }
+  if (!g.ok) {
+    const sec = geoTable('Počátek projektu (0, 0, 0)', []);
+    sec.appendChild(originSection());
+    root.appendChild(sec);
   }
   // kontroly
   const cs = el('section', 'pset');
@@ -556,9 +562,119 @@ function placeGeoOverlay() {
     pt.label.style.left = `${s1.x + 10}px`; pt.label.style.top = `${s1.y - 10}px`;
   }
 }
+/* ---------- lokální počátek (0, 0, 0) v modelu ---------- */
+const ORIGIN_KEY = 'ifc-nahled-origin';
+const origin = { on: false, group: null, label: null, axes: [] };
+try { origin.on = localStorage.getItem(ORIGIN_KEY) === '1'; } catch (e) { /* ignore */ }
+function originBuild() {
+  if (origin.group) return;
+  origin.group = new THREE.Group();
+  origin.group.matrixAutoUpdate = false;
+  [[1, 0, 0], [0, 1, 0], [0, 0, 1]].forEach((d, i) => {
+    const g = new LineGeometry();
+    g.setPositions([0, 0, 0, ...d]);
+    const ln = new Line2(g, originMats[i]);
+    ln.renderOrder = 20;
+    origin.group.add(ln);
+  });
+  measureScene.add(origin.group);
+  origin.label = el('div', 'origin-label');
+  origin.axes = ['x', 'y', 'z'].map((t) => el('div', `origin-ax origin-${t}`, t));
+  overlay.append(origin.label, ...origin.axes);
+}
+function originText() {
+  const g = S.geo;
+  if (g?.ok) {
+    const [a, b, c] = geoValues(geoMapFromLocal({ x: 0, y: 0, z: 0 }));
+    const [la, lb, lc] = geoLabels();
+    return [`${la} ${nf3s.format(a)}`, `${lb} ${nf3s.format(b)}`, `${lc} ${nf3s.format(c)}`];
+  }
+  return ['lokální souřadnice projektu'];
+}
+function originRefresh() {
+  if (!origin.label) return;
+  const t = originText(), key = t.join('|');
+  if (origin.key === key) return;
+  origin.key = key;
+  origin.label.replaceChildren(el('b', null, 'Počátek 0, 0, 0'), ...t.map((x) => el('span', null, x)));
+}
+function setOrigin(on) {
+  origin.on = on;
+  try { localStorage.setItem(ORIGIN_KEY, on ? '1' : '0'); } catch (e) { /* ignore */ }
+  if (on) { originBuild(); originRefresh(); }
+  if (!$('#panel-geo').hidden) renderGeo();
+  markPlanDirty(0);
+  requestRender();
+}
+/* volá se před každým snímkem: osy mají stálou délku na obrazovce (~70 px), popisek u počátku */
+function updateOriginMarker() {
+  const show = origin.on && S.modelID != null;
+  if (origin.group) origin.group.visible = show;
+  if (!show) {
+    if (origin.label) { origin.label.hidden = true; origin.axes.forEach((a) => { a.hidden = true; }); }
+    return;
+  }
+  originBuild();
+  originRefresh();
+  const o = toScenePoint(new THREE.Vector3(0, 0, 0));
+  const dx = toSceneDir(new THREE.Vector3(1, 0, 0)), dy = toSceneDir(new THREE.Vector3(0, 1, 0)), dz = toSceneDir(new THREE.Vector3(0, 0, 1));
+  const h = renderer.domElement.clientHeight || 1;
+  const dist = Math.max(camera.position.distanceTo(o), 1e-3);
+  const s = dist * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * 2 * (70 / h);
+  origin.group.matrix.makeBasis(dx, dy, dz).scale(new THREE.Vector3(s, s, s)).setPosition(o);
+  origin.group.matrixWorldNeedsUpdate = true;
+  const so = toScreen(o);
+  let ax = 0, ay = 0;
+  [dx, dy, dz].forEach((d, i) => {
+    const st = toScreen(o.clone().addScaledVector(d, s * 1.18));
+    const a = origin.axes[i];
+    a.hidden = !st.ok || !so.ok;
+    a.style.left = `${st.x}px`; a.style.top = `${st.y}px`;
+    ax += st.x - so.x; ay += st.y - so.y;
+  });
+  // popisek na opačnou stranu, než míří osy, aby je nepřekrýval
+  origin.label.hidden = !so.ok;
+  origin.label.style.left = `${so.x + (ax > 0 ? -10 : 10)}px`;
+  origin.label.style.top = `${so.y + (ay > 0 ? -8 : 8)}px`;
+  origin.label.style.transform = `translate(${ax > 0 ? '-100%' : '0'}, ${ay > 0 ? '-100%' : '0'})`;
+}
+/* zaměřit pohled na počátek (stejný směr, vzdálenost podle velikosti modelu) */
+function focusOrigin() {
+  const o = toScenePoint(new THREE.Vector3(0, 0, 0));
+  const r = S.bbox.isEmpty() ? 10 : Math.max(S.bbox.getSize(new THREE.Vector3()).length() / 4, 5);
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  tween(o.clone().add(dir.multiplyScalar(r)), o, true);
+}
+function originSection() {
+  const wrap = el('div', 'geo-links');
+  const b = el('button', 'sbtn tog-txt', origin.on ? 'Skrýt v modelu' : 'Ukázat v modelu'); b.type = 'button';
+  b.setAttribute('aria-pressed', String(origin.on));
+  b.addEventListener('click', () => setOrigin(!origin.on));
+  const f = el('button', 'sbtn', 'Zaměřit'); f.type = 'button';
+  f.addEventListener('click', () => { if (!origin.on) setOrigin(true); focusOrigin(); });
+  wrap.append(b, f);
+  // vzdálenost počátku od modelu (velké souřadnice v geometrii, počátek mimo stavbu)
+  if (!S.bbox.isEmpty()) {
+    const o = toScenePoint(new THREE.Vector3(0, 0, 0));
+    const d = S.bbox.distanceToPoint(o);
+    if (d > 0.5) wrap.appendChild(el('span', 'muted small origin-dist', `Leží ${nf.format(Math.round(d))} m od modelu.`));
+  }
+  return wrap;
+}
 function geoPlanMarks() {
   if (!plan.view) return '';
-  return geoPts.map((pt) => {
+  let om = '';
+  if (origin.on && S.modelID != null) {
+    const o = toScenePoint(new THREE.Vector3(0, 0, 0));
+    const q = planXY(o.x, o.z), qx = toSceneDir(new THREE.Vector3(1, 0, 0)), qy = toSceneDir(new THREE.Vector3(0, 1, 0));
+    const ax = planXY(o.x + qx.x, o.z + qx.z), ay = planXY(o.x + qy.x, o.z + qy.z);
+    const nrm = (p) => { const vx = p.x - q.x, vy = p.y - q.y, L = Math.hypot(vx, vy) || 1; return [q.x + vx / L * 40, q.y + vy / L * 40]; };
+    const [xx, xy] = nrm(ax), [yx, yy] = nrm(ay);
+    om = `<line x1="${q.x}" y1="${q.y}" x2="${xx}" y2="${xy}" class="po-x"/><line x1="${q.x}" y1="${q.y}" x2="${yx}" y2="${yy}" class="po-y"/>`
+      + `<circle cx="${q.x}" cy="${q.y}" r="4" class="po-dot"/><text x="${xx + 4}" y="${xy + 4}" class="po-tx">x</text><text x="${yx + 4}" y="${yy + 4}" class="po-ty">y</text>`
+      + `<text x="${q.x + 8}" y="${q.y + 16}" class="pg-txt">0, 0, 0</text>`;
+  }
+  return om + geoPts.map((pt) => {
     const q = planXY(pt.p.x, pt.p.z);
     return `<circle cx="${q.x}" cy="${q.y}" r="4.5" class="pg-dot"/><text x="${q.x + 7}" y="${q.y - 6}" class="pg-txt">${pt.name}</text>`;
   }).join('');
