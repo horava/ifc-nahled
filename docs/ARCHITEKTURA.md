@@ -51,5 +51,7 @@ spuštění – nová část patří tam, kde jsou definované věci, které př
 
 ## Vydání nové verze
 1. Upravit části v `src/parts/`, spustit `npm run build` a `python3 tests/run_tests.py`.
-2. Zvýšit `VERSION` v `sw.js`, doplnit `CHANGELOG.md`.
+2. Zvýšit `VERSION` v `sw.js` (u **každého** vydání, i opravy – jinak se ze staré mezipaměti vezme starý app.js),
+   doplnit `CHANGELOG.md`. Sestavení vezme číslo verze z `sw.js` (zobrazí se v horní liště) a zapíše otisk
+   do `index.html` (`<meta name="app-build">`) i do app.js.
 3. Nahrát soubory do repozitáře; na iPadu aplikaci dvakrát zavřít a otevřít.

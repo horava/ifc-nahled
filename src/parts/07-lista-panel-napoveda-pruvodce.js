@@ -203,14 +203,11 @@ function showHelpSec(sec) {
     document.querySelectorAll('.lic').forEach((x) => x.setAttribute('aria-pressed', 'false'));
   }
 }
-// verze = číslo offline mezipaměti (ifc-nahled-vNN), které se zvyšuje s každým vydáním
-async function appVersionText() {
-  try {
-    const k = (await caches.keys()).find((x) => /^ifc-nahled-v\d+$/.test(x));
-    if (k) return `verze ${k.slice('ifc-nahled-v'.length)}`;
-  } catch (e) { /* bez service workeru */ }
-  return 'webová verze';
-}
+// verze = číslo vydání (stejné jako VERSION v sw.js), zapsané do app.js při sestavení
+const APP_VERSION = __VERSION__, APP_BUILD = __BUILD__;
+async function appVersionText() { return `verze ${APP_VERSION} (sestavení ${APP_BUILD})`; }
+$('#app-ver').textContent = `v${APP_VERSION}`;
+$('#app-ver').addEventListener('click', () => openAbout());
 function openHelp(sec = helpSec) {
   appVersionText().then((t) => { $('#about-version').textContent = t; });
   $('#help-modal').hidden = false;

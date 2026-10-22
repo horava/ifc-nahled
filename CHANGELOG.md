@@ -2,6 +2,17 @@
 
 Číslo verze odpovídá `VERSION` v `sw.js` (`ifc-nahled-vNN`) a zobrazuje se v návodu v kapitole O aplikaci.
 
+## v47
+- Číslo verze v horní liště vedle názvu (ťuknutím se otevře O aplikaci, kde je i otisk sestavení).
+  Číslo se při sestavení bere z `VERSION` v `sw.js`.
+
+## v46 – oprava po aktualizaci, telefon
+- Oprava: po aktualizaci se mohla načíst nová stránka se starým app.js z offline mezipaměti a aplikace spadla
+  („Cannot set properties of null“). Stránka a app.js teď nesou otisk sestavení; když nesedí, aplikace smaže
+  mezipaměť a jednou se načte znovu. Každé vydání musí mít nové VERSION v sw.js.
+- Telefon na výšku: výběr prvku otevře spodní panel jen jako proužek (třída a název prvku), aby zbylo místo na model;
+  vytáhnout ho jde za úchyt. Tlačítko panelu v horní liště ho otevře do půlky. Výška nastavená tažením se pamatuje.
+
 ## v45 – pohodlnější ovládání
 - Tlačítka Celý a 3D sloučená: Celý drží směr pohledu, druhým stiskem (nebo po pohledu shora) přejde na výchozí 3D pohled.
 - Zaměřit, Skrýt, Izolovat a Vše jsou v malé liště nad nástroji a objeví se, jen když dávají smysl (výběr, skryté prvky); křížek zruší výběr.

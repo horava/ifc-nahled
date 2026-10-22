@@ -22,6 +22,7 @@ body { margin: 0; }
 </style>
 </head>
 <body>
+<meta name="app-build" content="9622806089ff">
 <script>try { var t = localStorage.getItem('ifc-nahled-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
 <style>
 /* Layout: one-screen app — header row, then 3D stage + side panel (bottom sheet on phones). Concrete-grey neutrals, site-orange for selection and actions. */
@@ -84,6 +85,8 @@ button { font: inherit; color: inherit; }
 .brand { display: flex; align-items: center; gap: 10px; flex: none; }
 .brand svg { width: 28px; height: 28px; }
 .brand-name { font-family: var(--f-display); font-weight: 600; font-size: 20px; letter-spacing: 0.01em; }
+.app-ver { border: 0; background: none; padding: 4px 2px; margin-left: -4px; cursor: pointer; font-family: var(--f-mono); font-size: 12px; color: var(--muted); align-self: center; }
+.app-ver:hover { color: var(--accent); }
 .file { min-width: 0; flex: 1; font-family: var(--f-mono); font-size: 13px; color: var(--muted);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 16px;
@@ -664,6 +667,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
         <path d="M4 10l12 7 12-7" fill="none" stroke="var(--panel)" stroke-width="1.6"/>
       </svg>
       <span class="brand-name">IFC prohlížečka</span>
+      <button class="app-ver" id="app-ver" type="button" title="O aplikaci"></button>
     </div>
     <span class="file" id="file-name"></span>
     <button class="btn icon" id="btn-help" type="button" aria-label="Návod" title="Návod">

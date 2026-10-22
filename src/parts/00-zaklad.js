@@ -10,6 +10,26 @@ import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import proj4 from 'proj4';
 import * as Lerc from 'lerc/LercDecode.es.js';
 
+/* Stránka a app.js musí být ze stejného sestavení. Když prohlížeč vezme novou stránku, ale app.js ještě
+   ze staré offline mezipaměti (nebo naopak), smaže se mezipaměť a stránka se jednou načte znovu. */
+(() => {
+  const m = document.querySelector('meta[name="app-build"]');
+  if (!m || m.content === __BUILD__) return;
+  try {
+    if (sessionStorage.getItem('ifc-nahled-reload') === m.content) return; // už jsme zkoušeli – nezacyklit
+    sessionStorage.setItem('ifc-nahled-reload', m.content);
+  } catch (e) { return; }
+  (async () => {
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration();
+      await reg?.update();
+      for (const k of await caches.keys()) if (k.startsWith('ifc-nahled-')) await caches.delete(k);
+    } catch (e) { /* ignore */ }
+    location.reload();
+  })();
+  throw new Error('Nová verze aplikace – načítám znovu…');
+})();
+
 /* ---------- helpers ---------- */
 const $ = (s) => document.querySelector(s);
 const el = (tag, cls, text) => {

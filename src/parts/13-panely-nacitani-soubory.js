@@ -19,7 +19,11 @@ function showPanel(name) {
   setSheetOpen(true);
 }
 document.querySelectorAll('.tab').forEach((t) => t.addEventListener('click', () => showPanel(t.dataset.tab)));
-$('#btn-sheet').addEventListener('click', () => setSheetOpen(!app.classList.contains('sheet-open')));
+$('#btn-sheet').addEventListener('click', () => {
+  const open = !app.classList.contains('sheet-open');
+  // tlačítkem se panel otevře aspoň do půlky (proužek je pro rychlý pohled na vybraný prvek)
+  setSheetOpen(open, sheet.pref === 'peek' ? 'half' : sheet.pref);
+});
 
 /* ---------- spodní panel (telefon, tablet na výšku) ----------
    Tři výšky: proužek (záložky a začátek obsahu), půlka, celá výška. Za úchyt se táhne, ťuknutí přepíná.
@@ -27,16 +31,19 @@ $('#btn-sheet').addEventListener('click', () => setSheetOpen(!app.classList.cont
    lišta, akce a hlášky se zvednou nad panel (--sheet-cover). */
 const SHEET_MQ = matchMedia('(max-width: 719px), (orientation: portrait) and (max-width: 1100px)');
 const SHEET_STATES = ['peek', 'half', 'full'];
-const sheet = { state: 'half', cover: 0 };
-try { const st = localStorage.getItem('ifc-nahled-sheet'); if (SHEET_STATES.includes(st)) sheet.state = st; } catch (e) { /* ignore */ }
+// pref = výška, kterou si uživatel naposledy nastavil (na telefonu výchozí proužek, ať zbude místo na model)
+const sheet = { pref: matchMedia('(max-width: 719px)').matches ? 'peek' : 'half', state: 'half', cover: 0 };
+try { const st = localStorage.getItem('ifc-nahled-sheet'); if (SHEET_STATES.includes(st)) sheet.pref = st; } catch (e) { /* ignore */ }
+sheet.state = sheet.pref;
 const panelEl = $('.panel'), mainEl = $('.main');
 const isSheet = () => SHEET_MQ.matches;
 function sheetHeights() {
   const M = mainEl.clientHeight;
   return { peek: Math.round(Math.min(150, M * 0.4)), half: Math.round(M * 0.5), full: Math.max(Math.round(M - 8), 160) };
 }
-function setSheetOpen(open) {
+function setSheetOpen(open, state) {
   const was = app.classList.contains('sheet-open');
+  if (open && !was) sheet.state = state || sheet.pref;
   app.classList.toggle('sheet-open', open);
   $('#btn-sheet').setAttribute('aria-expanded', String(open));
   if (was !== open) applySheet();
@@ -78,7 +85,7 @@ function followSheet(done) {
   requestAnimationFrame(step);
 }
 function setSheetState(st) {
-  sheet.state = st;
+  sheet.state = st; sheet.pref = st;
   try { localStorage.setItem('ifc-nahled-sheet', st); } catch (e) { /* ignore */ }
   applySheet();
 }
