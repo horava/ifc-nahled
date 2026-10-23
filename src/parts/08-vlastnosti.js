@@ -34,6 +34,37 @@ function propRows(set) {
   return rows;
 }
 
+/* všechny přímé atributy entity v pořadí podle schématu, i nevyplněné ($) – aby šlo zkontrolovat,
+   co dodavatel nevyplnil. Odkazy na jiné entity (umístění, geometrie, historie) se vynechávají. */
+const ATTR_SKIP = new Set(['expressID', 'type', 'GlobalId', 'OwnerHistory', 'ObjectPlacement', 'Representation',
+  'RepresentationContexts', 'UnitsInContext', 'RepresentationMaps', 'HasPropertySets']);
+function attrValue(v, pu) {
+  if (v == null) return '';
+  if (Array.isArray(v)) return v.some((x) => x?.type === 5) ? null : v.map((x) => attrValue(x, pu)).filter(Boolean).join(', ');
+  if (typeof v !== 'object') return val(v);
+  if (v.type === 5) return null; // odkaz
+  if (v.type === 4 || v._representationValue != null) {
+    const n = GEO_NUM(v);
+    if (n == null) return '';
+    const len = /LENGTHMEASURE$/.test(v.name || '') && pu;
+    return len ? `${nf.format(n)} ${unitLabel(pu)}` : nf.format(n);
+  }
+  return val(v);
+}
+function entityAttrRows(item, { pu = null, skipFilled = null } = {}) {
+  const rows = [];
+  for (const k of Object.keys(item)) {
+    if (ATTR_SKIP.has(k)) continue;
+    const v = attrValue(item[k], pu);
+    if (v === null) continue;
+    if (v && skipFilled?.has(k)) continue; // vyplněné hodnoty ukáže v lepším formátu spatialRows
+    rows.push([k, v]);
+  }
+  return rows;
+}
+const SPATIAL_KEYS = new Set(['Elevation', 'ElevationOfRefHeight', 'ElevationOfTerrain', 'BuildingAddress', 'RefLatitude', 'RefLongitude',
+  'RefElevation', 'LandTitleNumber', 'SiteAddress', 'CompositionType']);
+
 function table(title, rows, extra) {
   const sec = el('section', 'pset');
   const h = el('h3', 'pset-title', title);
@@ -262,11 +293,7 @@ async function renderProps() {
     root.appendChild(head);
     if (rec && S.cmp) { const cs = cmpDiffSection(id); if (cs) root.appendChild(cs); }
 
-    const attrs = [];
-    for (const k of ['Description', 'ObjectType', 'Tag', 'PredefinedType', 'LongName', 'OverallWidth', 'OverallHeight']) {
-      const v = val(item[k]);
-      if (v) attrs.push([k, v]);
-    }
+    const attrs = entityAttrRows(item, { pu: S.geo?.pu ?? null, skipFilled: rec ? null : SPATIAL_KEYS });
     attrs.push(['Express ID', `#${id}`]);
     if (typeNames.length) attrs.push(['Typ', typeNames.join(', ')]);
     if (materials.length) attrs.push(['Materiál', materials.join(', ')]);

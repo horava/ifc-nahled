@@ -2,6 +2,11 @@
 
 Číslo verze odpovídá `VERSION` v `sw.js` (`ifc-nahled-vNN`) a zobrazuje se v návodu v kapitole O aplikaci.
 
+## v49
+- Vlastnosti: v Atributech jsou všechny přímé atributy entity v pořadí podle schématu, i nevyplněné (—), aby šlo
+  zkontrolovat, co dodavatel nevyplnil (Name, Description, ObjectType, Tag, PredefinedType, LongName…). Délky
+  (např. OverallWidth) s jednotkou projektu. Totéž u podkladových modelů. Prázdné vlastnosti v sadách se ukazovaly už dřív.
+
 ## v48
 - Lokální počátek (0, 0, 0) v modelu: v záložce Geo tlačítka Ukázat v modelu a Zaměřit. Ve 3D osy x / y / z se stálou
   velikostí na obrazovce a popisek s mapovými souřadnicemi počátku (E/N nebo Y/X, H), v půdorysu osy x a y.

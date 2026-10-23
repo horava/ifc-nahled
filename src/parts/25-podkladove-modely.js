@@ -229,7 +229,7 @@ async function refPropsView(root, token) {
     }
     root.appendChild(head);
     const attrs = [];
-    for (const k of ['Description', 'ObjectType', 'Tag', 'PredefinedType', 'LongName']) { const v = val(item[k]); if (v) attrs.push([k, v]); }
+    attrs.push(...entityAttrRows(item));
     attrs.push(['Express ID', `#${id}`]);
     root.appendChild(table('Atributy', attrs));
     const seen = new Set();
