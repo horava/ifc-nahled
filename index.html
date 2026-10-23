@@ -22,7 +22,7 @@ body { margin: 0; }
 </style>
 </head>
 <body>
-<meta name="app-build" content="696f807df942">
+<meta name="app-build" content="8cf1bf555d96">
 <script>try { var t = localStorage.getItem('ifc-nahled-theme'); if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t); } catch (e) {}</script>
 <style>
 /* Layout: one-screen app — header row, then 3D stage + side panel (bottom sheet on phones). Concrete-grey neutrals, site-orange for selection and actions. */
@@ -308,6 +308,9 @@ button { font: inherit; color: inherit; }
 .kv dt { color: var(--muted); padding-right: 12px; }
 .kv dd { margin: 0; font-variant-numeric: tabular-nums; }
 .kv dd.kv-empty { color: var(--muted); }
+.kv dd.kv-missing { color: var(--warn); font-size: 12.5px; }
+.kv dt.kv-missing-k { color: var(--warn); }
+.pset-missing .pset-tag { color: var(--warn); }
 
 /* overlays */
 .loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--ground) 70%, transparent); z-index: 5; }
@@ -951,7 +954,7 @@ a, img { -webkit-user-drag: none; -webkit-touch-callout: none; }
             </ul>
             <h4>Záložka Vlastnosti</h4>
             <p>Atributy, GlobalId, materiál, všechny sady vlastností (Pset) a množství (Qto), včetně vlastností převzatých z typu. U prvku je i jeho poloha v mapových souřadnicích.</p>
-            <p>Atributy i vlastnosti se ukazují i <b>nevyplněné</b> (pomlčka), takže je vidět, co v modelu chybí.</p>
+            <p>Atributy i vlastnosti se ukazují i <b>nevyplněné</b> (pomlčka). Vlastnosti, které prvku <b>chybí úplně</b>, ale ostatní prvky stejné třídy je mají, jsou oranžově s poznámkou „chybí · vyplněno u N z M“; celá chybějící sada má štítek „chybí“. Tak je vidět totéž, co barvení hlásí jako nevyplněné.</p>
             <h4>Akce nad lištou</h4>
             <p>Objeví se nad lištou nástrojů po výběru prvku, po skrytí nebo izolaci (ne při rozbaleném panelu řezu – ten se u vodorovného řezu po výběru prvku sám sbalí). Zpět je na začátku lišty.</p>
             <dl class="help-dl">

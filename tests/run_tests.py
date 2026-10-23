@@ -497,6 +497,25 @@ def t_origin(C):
     no_errors(pg)
 
 
+@test('vlastnosti: nevyplněné atributy a chybějící vlastnosti')
+def t_missing_props(C):
+    # ukázka, ve které místnosti 1.01 chybí v MU_Pasport vlastnost Ucel
+    src = (ROOT / 'sample.ifc').read_text(encoding='utf-8')
+    check('#283=IFCPROPERTYSET(' in src, 'ukázkový model se změnil, uprav test')
+    CACHE.mkdir(exist_ok=True)
+    out = CACHE / 'chybi-ucel.ifc'
+    out.write_text(src.replace("'MU_Pasport',$,(#285,#286,#287))", "'MU_Pasport',$,(#285,#286))"), encoding='utf-8')
+    pg = C.app()
+    open_model(pg, out, wait_idx=True)
+    pg.click('[data-tab="search"]'); pg.wait_for_timeout(300)
+    pg.fill('#search-q', '1.01'); pg.wait_for_timeout(800)
+    pg.locator('.res-item').filter(has_text='1.01').first.click(); pg.wait_for_timeout(1200)
+    txt = pg.inner_text('#panel-props')
+    check('Description' in txt and 'ObjectType' in txt, 'nevyplněné atributy jsou vidět')
+    check('Ucel' in txt and 'chybí' in txt, f'chybějící vlastnost Ucel: {txt[:600]!r}')
+    no_errors(pg)
+
+
 @test('velký model: sloučené kreslení a paměť', big=True)
 def t_big(C):
     huge = generate('mkhuge.py', 'huge65.ifc', 8600)

@@ -2,6 +2,12 @@
 
 Číslo verze odpovídá `VERSION` v `sw.js` (`ifc-nahled-vNN`) a zobrazuje se v návodu v kapitole O aplikaci.
 
+## v50
+- Vlastnosti: vlastnosti, které prvku úplně chybí, ale ostatní prvky stejné třídy je mají (stejná sada, stejný název),
+  se ukážou oranžově jako „chybí · vyplněno u N z M“. Sada, která prvku chybí celá, se přidá se štítkem „chybí“.
+  Odpovídá tomu, co barvení a hledání hlásí jako nevyplněné. Počítá se z indexu vlastností (dopočítá se na pozadí).
+- Testy: 17 (nově nevyplněné a chybějící vlastnosti).
+
 ## v49
 - Vlastnosti: v Atributech jsou všechny přímé atributy entity v pořadí podle schématu, i nevyplněné (—), aby šlo
   zkontrolovat, co dodavatel nevyplnil (Name, Description, ObjectType, Tag, PredefinedType, LongName…). Délky

@@ -65,6 +65,65 @@ function entityAttrRows(item, { pu = null, skipFilled = null } = {}) {
 const SPATIAL_KEYS = new Set(['Elevation', 'ElevationOfRefHeight', 'ElevationOfTerrain', 'BuildingAddress', 'RefLatitude', 'RefLongitude',
   'RefElevation', 'LandTitleNumber', 'SiteAddress', 'CompositionType']);
 
+/* Které sady a vlastnosti mají ostatní prvky stejné třídy (z indexu vlastností; počítají se jen vyplněné).
+   Slouží k ukázání vlastností, které prvku úplně chybí – barvení je hlásí jako nevyplněné. */
+function classPropSchema(cls) {
+  const idx = S.idx;
+  if (!idx?.ready || idx.mid !== S.modelID) return null;
+  if (!idx.schema) idx.schema = new Map();
+  if (idx.schema.has(cls)) return idx.schema.get(cls);
+  const sets = new Map();
+  let total = 0;
+  for (const [eid, rec] of S.elements) {
+    if (rec.cls !== cls) continue;
+    total++;
+    const r = idx.el.get(eid);
+    if (!r) continue;
+    const seen = new Set();
+    for (const s of [...r.sets, ...r.tsets]) {
+      let m = sets.get(s.name);
+      if (!m) sets.set(s.name, (m = new Map()));
+      for (const [k] of s.props) {
+        const pn = k.slice(s.name.length + 1).split('.')[0];
+        const key = `${s.name}\u0000${pn}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        m.set(pn, (m.get(pn) || 0) + 1);
+      }
+    }
+  }
+  const sch = { total, sets };
+  idx.schema.set(cls, sch);
+  return sch;
+}
+function missingRow(dl, name, n, total) {
+  const dd = el('dd', 'kv-missing', `chybí · vyplněno u ${n.toLocaleString('cs-CZ')} z ${total.toLocaleString('cs-CZ')}`);
+  dd.title = 'Vlastnost v prvku není, ostatní prvky stejné třídy ji mají';
+  dl.append(el('dt', 'kv-missing-k', softBreak(name)), dd);
+}
+/* doplní do zobrazených sad chybějící vlastnosti a přidá sady, které prvku chybí celé */
+function addMissingProps(root, cls, shown) {
+  const sch = classPropSchema(cls);
+  if (!sch || sch.total < 2) return;
+  const coll = new Intl.Collator('cs', { numeric: true });
+  for (const [setName, props] of [...sch.sets].sort((a, b) => coll.compare(a[0], b[0]))) {
+    const have = shown.get(setName);
+    const miss = [...props].filter(([pn]) => !have?.names.has(pn));
+    if (!miss.length) continue;
+    let dl;
+    if (have) dl = have.dl;
+    else {
+      const sec = table(setName, [], 'chybí');
+      sec.classList.add('pset-missing');
+      root.appendChild(sec);
+      dl = sec.querySelector('dl');
+    }
+    miss.forEach(([pn, n]) => missingRow(dl, pn, n, sch.total));
+  }
+}
+
+/* dlouhé názvy ve tvaru ElevationWithFlooring: zalomit mezi slovy, ne uprostřed slova */
+const softBreak = (k) => (String(k).length > 14 ? String(k).replace(/([a-z])([A-Z])/g, '$1\u200b$2') : k);
 function table(title, rows, extra) {
   const sec = el('section', 'pset');
   const h = el('h3', 'pset-title', title);
@@ -72,7 +131,7 @@ function table(title, rows, extra) {
   sec.appendChild(h);
   const dl = el('dl', 'kv');
   rows.forEach(([k, v]) => {
-    dl.append(el('dt', null, k), el('dd', v ? null : 'kv-empty', v || '—'));
+    dl.append(el('dt', null, softBreak(k)), el('dd', v ? null : 'kv-empty', v || '—'));
   });
   sec.appendChild(dl);
   return sec;
@@ -315,15 +374,25 @@ async function renderProps() {
       const qa = a.p.Quantities ? 1 : 0, qb = b.p.Quantities ? 1 : 0;
       return qa - qb || (a.from ? 1 : 0) - (b.from ? 1 : 0) || val(a.p.Name).localeCompare(val(b.p.Name), 'cs');
     });
-    const seen = new Set();
+    const seen = new Set(), shown = new Map();
     for (const { p: ps, from } of sorted) {
       if (seen.has(ps.expressID)) continue;
       seen.add(ps.expressID);
       const rows = propRows(ps);
       if (!rows.length) continue;
-      root.appendChild(table(val(ps.Name) || 'Bez názvu', rows, ps.Quantities ? 'Množství' : from));
+      const nm = val(ps.Name) || 'Bez názvu';
+      const sec = table(nm, rows, ps.Quantities ? 'Množství' : from);
+      root.appendChild(sec);
+      const e = shown.get(nm) || { dl: sec.querySelector('dl'), names: new Set() };
+      rows.forEach(([k]) => e.names.add(k));
+      shown.set(nm, e);
     }
     if (!sorted.length) root.appendChild(el('p', 'muted pad', 'Nemá žádné sady vlastností.'));
+    // vlastnosti, které mají ostatní prvky stejné třídy a tomuto chybí (index se případně dopočítá na pozadí)
+    if (rec) {
+      if (S.idx?.ready && S.idx.mid === S.modelID) addMissingProps(root, rec.cls, shown);
+      else ensureIndex().then(() => { if (token === propToken) renderProps(); }).catch(() => {});
+    }
   } catch (e) {
     console.error(e);
     if (token === propToken) root.replaceChildren(el('p', 'muted pad', 'Vlastnosti se nepodařilo načíst.'));
